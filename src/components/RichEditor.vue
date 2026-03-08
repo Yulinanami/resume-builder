@@ -56,8 +56,48 @@ function setFontSize(e: Event) {
     span.innerHTML = el.innerHTML
     el.parentNode?.replaceChild(span, el)
   })
+  // Keep list item marker size in sync with content size.
+  applyFontSizeToSelectedListItems(size)
   editorRef.value?.focus()
   onInput()
+}
+
+function applyFontSizeToSelectedListItems(size: string) {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  const startEl =
+    range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.startContainer as Element)
+      : range.startContainer.parentElement
+  const endEl =
+    range.endContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.endContainer as Element)
+      : range.endContainer.parentElement
+
+  const startLi = startEl?.closest('li') as HTMLElement | null
+  const endLi = endEl?.closest('li') as HTMLElement | null
+
+  if (startLi && endLi && startLi.parentElement && startLi.parentElement === endLi.parentElement) {
+    const siblings = Array.from(startLi.parentElement.children).filter(
+      (node) => node instanceof HTMLElement && node.tagName === 'LI'
+    ) as HTMLElement[]
+    const startIndex = siblings.indexOf(startLi)
+    const endIndex = siblings.indexOf(endLi)
+    if (startIndex > -1 && endIndex > -1) {
+      const from = Math.min(startIndex, endIndex)
+      const to = Math.max(startIndex, endIndex)
+      for (let i = from; i <= to; i += 1) {
+        const li = siblings[i]
+        if (li) li.style.fontSize = size
+      }
+      return
+    }
+  }
+
+  if (startLi) startLi.style.fontSize = size
+  if (endLi && endLi !== startLi) endLi.style.fontSize = size
 }
 
 function setColor(e: Event) {
@@ -262,5 +302,12 @@ function isActive(cmd: string): boolean {
 
 .editor-area li {
   margin-bottom: 2px;
+  font-size: inherit;
+}
+
+.editor-area li::marker {
+  font-size: 1em;
+  font-weight: inherit;
+  color: currentColor;
 }
 </style>

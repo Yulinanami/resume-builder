@@ -1,18 +1,111 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { useResumeStore } from '@/stores/resume'
+import { getModuleIconPaths, MODULE_ICON_VIEWBOX } from '@/constants/moduleIcons'
 
 const store = useResumeStore()
+const props = withDefaults(defineProps<{ collapsed?: boolean }>(), {
+  collapsed: false,
+})
+const emit = defineEmits<{
+  (e: 'toggle-collapse'): void
+  (e: 'continue-editing'): void
+}>()
 
 const enabledCount = computed(() => store.modules.filter((m) => m.visible).length)
-const progressPercent = computed(() => Math.round((enabledCount.value / store.modules.length) * 100))
+const displayName = computed(() => store.basicInfo.name?.trim() || '同学')
+
+function hasTextContent(value: string | undefined): boolean {
+  if (!value) return false
+  const text = value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .trim()
+  return text.length > 0
+}
+
+function countFilled(values: Array<string | undefined>): number {
+  return values.reduce((count, value) => count + (value?.trim() ? 1 : 0), 0)
+}
+
+function scoreByFilled(values: Array<string | undefined>): number {
+  if (values.length === 0) return 0
+  return countFilled(values) / values.length
+}
+
+const completionPercent = computed(() => {
+  const basic = store.basicInfo
+  const basicInfoScore = scoreByFilled([
+    basic.name,
+    basic.phone,
+    basic.email,
+    basic.jobTitle,
+    basic.expectedLocation,
+    basic.educationLevel,
+  ])
+
+  const firstEducation = store.educationList.find((e) =>
+    [e.school, e.major, e.degree, e.startDate].some((value) => value?.trim())
+  )
+  const educationScore = firstEducation
+    ? scoreByFilled([firstEducation.school, firstEducation.major, firstEducation.degree, firstEducation.startDate])
+    : 0
+
+  const firstWork = store.workList.find((w) =>
+    [w.company, w.position, w.startDate, w.description].some((value) => value?.trim())
+  )
+  const workScore = firstWork
+    ? scoreByFilled([firstWork.company, firstWork.position, firstWork.startDate, firstWork.description])
+    : 0
+
+  const firstProject = store.projectList.find((p) =>
+    [p.name, p.role, p.startDate, p.mainWork].some((value) => value?.trim())
+  )
+  const projectScore = firstProject
+    ? scoreByFilled([firstProject.name, firstProject.role, firstProject.startDate, firstProject.mainWork])
+    : 0
+
+  const firstAward = store.awardList.find((a) => [a.name, a.date].some((value) => value?.trim()))
+  const awardsScore = firstAward ? scoreByFilled([firstAward.name, firstAward.date]) : 0
+
+  const moduleCompletion: Record<string, number> = {
+    basicInfo: basicInfoScore,
+    education: educationScore,
+    skills: hasTextContent(store.skills) ? 1 : 0,
+    workExperience: workScore,
+    projectExperience: projectScore,
+    awards: awardsScore,
+    selfIntro: hasTextContent(store.selfIntro) ? 1 : 0,
+  }
+
+  const enabledModules = store.modules.filter((m) => m.visible)
+  if (enabledModules.length === 0) return 0
+  const total = enabledModules.reduce((sum, mod) => sum + (moduleCompletion[mod.key] ?? 0), 0)
+  return Math.round((total / enabledModules.length) * 100)
+})
+
+function moduleIconPaths(key: string): string[] {
+  return getModuleIconPaths(key)
+}
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :class="{ collapsed: props.collapsed }">
     <div class="brand">
-      <span class="brand-mark"></span>
-      <span class="brand-text">Resume Builder</span>
+      <div class="brand-left">
+        <span class="brand-mark"></span>
+        <span class="brand-text">Resume Builder</span>
+      </div>
+      <button
+        class="collapse-btn"
+        type="button"
+        :aria-label="props.collapsed ? '展开侧边菜单' : '收起侧边菜单'"
+        :title="props.collapsed ? '展开' : '收缩'"
+        :data-tip="props.collapsed ? '展开' : '收缩'"
+        @click="emit('toggle-collapse')"
+      >
+        {{ props.collapsed ? '>' : '<' }}
+      </button>
     </div>
 
     <p class="menu-caption">模块开关</p>
@@ -25,7 +118,11 @@ const progressPercent = computed(() => Math.round((enabledCount.value / store.mo
         :class="{ active: mod.visible, muted: !mod.visible }"
       >
         <div class="module-info">
-          <span class="module-icon">{{ mod.icon }}</span>
+          <span class="module-icon" aria-hidden="true">
+            <svg class="module-icon-svg" :viewBox="MODULE_ICON_VIEWBOX">
+              <path v-for="(d, idx) in moduleIconPaths(mod.key)" :key="`${mod.key}-${idx}`" :d="d" />
+            </svg>
+          </span>
           <span class="module-label">{{ mod.label }}</span>
         </div>
 
@@ -42,12 +139,12 @@ const progressPercent = computed(() => Math.round((enabledCount.value / store.mo
     </ul>
 
     <div class="profile-card">
-      <div class="profile-name">你好，张同学</div>
-      <div class="profile-meta">已完成度 {{ progressPercent }}%</div>
+      <div class="profile-name">你好，{{ displayName }}</div>
+      <div class="profile-meta">已完成度 {{ completionPercent }}%</div>
       <div class="progress-track">
-        <div class="progress-fill" :style="{ width: `${progressPercent}%` }"></div>
+        <div class="progress-fill" :style="{ width: `${completionPercent}%` }"></div>
       </div>
-      <button class="continue-btn">继续编辑</button>
+      <button class="continue-btn" @click="emit('continue-editing')">继续编辑</button>
     </div>
   </aside>
 </template>
@@ -68,8 +165,16 @@ const progressPercent = computed(() => Math.round((enabledCount.value / store.mo
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 6px;
   padding: 4px 4px 2px;
+}
+
+.brand-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -84,6 +189,68 @@ const progressPercent = computed(() => Math.round((enabledCount.value / store.mo
   font-size: 13px;
   font-weight: 700;
   color: #2d2521;
+}
+
+.collapse-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: #f7f3ee;
+  color: #d97745;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.collapse-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  transform: translate(-50%, -100%);
+  background: #2d2521;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  z-index: 6;
+}
+
+.collapse-btn::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #2d2521;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.collapse-btn:hover::after,
+.collapse-btn:hover::before,
+.collapse-btn:focus-visible::after,
+.collapse-btn:focus-visible::before {
+  opacity: 1;
+}
+.collapse-btn:hover {
+  background: #f2ece5;
+  color: #c96a3b;
 }
 
 .menu-caption {
@@ -130,9 +297,25 @@ const progressPercent = computed(() => Math.round((enabledCount.value / store.mo
 
 .module-icon {
   width: 18px;
-  text-align: center;
-  font-size: 14px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+}
+
+.module-icon-svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: #8a7461;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.module-item.active .module-icon-svg {
+  stroke: #d97745;
 }
 
 .module-label {
@@ -236,4 +419,46 @@ const progressPercent = computed(() => Math.round((enabledCount.value / store.mo
 .continue-btn:hover {
   background: #1f1916;
 }
+
+.sidebar.collapsed {
+  width: 92px;
+  min-width: 92px;
+  padding: 14px 8px;
+}
+
+.sidebar.collapsed .menu-caption,
+.sidebar.collapsed .profile-card,
+.sidebar.collapsed .brand-text,
+.sidebar.collapsed .module-label {
+  display: none;
+}
+
+.sidebar.collapsed .brand {
+  justify-content: center;
+}
+
+.sidebar.collapsed .module-item {
+  justify-content: center;
+  padding: 8px 6px;
+}
+
+.sidebar.collapsed .module-info {
+  min-width: auto;
+}
+
+.sidebar.collapsed .toggle-switch {
+  width: 36px;
+  height: 20px;
+}
+
+.sidebar.collapsed .toggle-slider::before {
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar.collapsed .toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+}
 </style>
+
+

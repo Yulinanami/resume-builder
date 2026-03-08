@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { useResumeStore } from '@/stores/resume'
 import { ref, reactive } from 'vue'
 
@@ -7,13 +7,21 @@ const collapsed = ref(false)
 
 // Extra optional fields visibility
 const extraFields = reactive<Record<string, boolean>>({
-  wechat: false,
-  currentCity: false,
-  github: false,
+  wechat: Boolean(store.basicInfo.wechat),
+  currentCity: Boolean(store.basicInfo.currentCity),
+  github: Boolean(store.basicInfo.github),
+  website: Boolean(store.basicInfo.website),
+  blog: Boolean(store.basicInfo.blog),
 })
 
-function toggleExtra(key: string) {
-  extraFields[key] = !extraFields[key]
+type ExtraFieldKey = 'wechat' | 'currentCity' | 'github' | 'website' | 'blog'
+
+function toggleExtra(key: ExtraFieldKey) {
+  const next = !extraFields[key]
+  extraFields[key] = next
+  if (!next) {
+    store.basicInfo[key] = ''
+  }
 }
 
 function handleAvatarUpload(e: Event) {
@@ -154,12 +162,7 @@ function removeAvatar() {
             <option value="博士">博士</option>
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label">个人网站</label>
-          <input v-model="store.basicInfo.website" type="text" class="form-input" placeholder="请输入个人网站地址" />
-        </div>
       </div>
-
       <!-- More -->
       <div class="sub-section-title">更多</div>
       <div class="extra-tags">
@@ -184,10 +187,24 @@ function removeAvatar() {
         >
           + GitHub
         </button>
+        <button
+          class="extra-tag"
+          :class="{ active: extraFields.website }"
+          @click="toggleExtra('website')"
+        >
+          + 个人网站
+        </button>
+        <button
+          class="extra-tag"
+          :class="{ active: extraFields.blog }"
+          @click="toggleExtra('blog')"
+        >
+          + 博客
+        </button>
       </div>
 
       <!-- Dynamic extra fields -->
-      <div class="form-grid-2 extra-fields" v-if="extraFields.wechat || extraFields.currentCity || extraFields.github">
+      <div class="form-grid-2 extra-fields" v-if="extraFields.wechat || extraFields.currentCity || extraFields.github || extraFields.website || extraFields.blog">
         <div class="form-group" v-if="extraFields.wechat">
           <label class="form-label">微信号</label>
           <input v-model="store.basicInfo.wechat" type="text" class="form-input" placeholder="请输入微信号" />
@@ -199,6 +216,14 @@ function removeAvatar() {
         <div class="form-group" v-if="extraFields.github">
           <label class="form-label">GitHub</label>
           <input v-model="store.basicInfo.github" type="text" class="form-input" placeholder="例如：github.com/username" />
+        </div>
+        <div class="form-group" v-if="extraFields.website">
+          <label class="form-label">个人网站</label>
+          <input v-model="store.basicInfo.website" type="text" class="form-input" placeholder="例如：example.com" />
+        </div>
+        <div class="form-group" v-if="extraFields.blog">
+          <label class="form-label">博客</label>
+          <input v-model="store.basicInfo.blog" type="text" class="form-input" placeholder="例如：blog.example.com" />
         </div>
       </div>
     </div>

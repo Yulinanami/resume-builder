@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, ref, watch } from 'vue'
+import { normalizeResumeTemplateKey, type ResumeTemplateKey } from '@/templates/resume'
 
 export interface BasicInfo {
   name: string
@@ -19,6 +20,7 @@ export interface BasicInfo {
   wechat: string
   currentCity: string
   github: string
+  blog: string
 }
 
 export interface EducationEntry {
@@ -71,6 +73,17 @@ export interface ModuleConfig {
   visible: boolean
 }
 
+type MoveDirection = 'up' | 'down'
+const DEFAULT_MODULE_ORDER = [
+  'basicInfo',
+  'education',
+  'skills',
+  'workExperience',
+  'projectExperience',
+  'awards',
+  'selfIntro',
+] as const
+
 let _idCounter = 0
 function genId(): string {
   return `item_${Date.now()}_${++_idCounter}`
@@ -105,6 +118,7 @@ export const useResumeStore = defineStore('resume', () => {
     wechat: '',
     currentCity: '',
     github: '',
+    blog: '',
   })
 
   const educationList = reactive<EducationEntry[]>([
@@ -153,10 +167,55 @@ export const useResumeStore = defineStore('resume', () => {
 
   const awardList = reactive<AwardEntry[]>([])
   const selfIntro = ref('')
+  const selectedTemplateKey = ref<ResumeTemplateKey>('default')
 
   function toggleModule(key: string) {
     const mod = modules.find((m) => m.key === key)
     if (mod) mod.visible = !mod.visible
+  }
+
+  function setTemplate(key: ResumeTemplateKey) {
+    selectedTemplateKey.value = key
+  }
+
+  function canMoveModule(key: string, direction: MoveDirection): boolean {
+    if (key === 'basicInfo') return false
+    const idx = modules.findIndex((m) => m.key === key)
+    if (idx < 0) return false
+    const mod = modules[idx]
+    if (!mod?.visible) return false
+    if (direction === 'up') return idx > 1
+    return idx < modules.length - 1
+  }
+
+  function moveModule(key: string, direction: MoveDirection) {
+    if (!canMoveModule(key, direction)) return
+    const idx = modules.findIndex((m) => m.key === key)
+    if (idx < 0) return
+    const target = direction === 'up' ? idx - 1 : idx + 1
+    const current = modules[idx]
+    const next = modules[target]
+    if (!current || !next) return
+    modules[idx] = next
+    modules[target] = current
+  }
+
+  function isDefaultModuleOrder(): boolean {
+    return modules.every((m, idx) => m.key === DEFAULT_MODULE_ORDER[idx])
+  }
+
+  function resetModuleOrder() {
+    const indexMap = new Map<string, number>()
+    DEFAULT_MODULE_ORDER.forEach((key, idx) => indexMap.set(key, idx))
+    const sorted = [...modules].sort((a, b) => {
+      const ai = indexMap.get(a.key)
+      const bi = indexMap.get(b.key)
+      if (ai === undefined && bi === undefined) return 0
+      if (ai === undefined) return 1
+      if (bi === undefined) return -1
+      return ai - bi
+    })
+    modules.splice(0, modules.length, ...sorted)
   }
 
   function isModuleVisible(key: string): boolean {
@@ -240,6 +299,7 @@ export const useResumeStore = defineStore('resume', () => {
   function saveToStorage() {
     const data = {
       modules: modules.map((m) => ({ ...m })),
+      selectedTemplateKey: selectedTemplateKey.value,
       basicInfo: { ...basicInfo },
       educationList: educationList.map((e) => ({ ...e })),
       skills: skills.value,
@@ -257,10 +317,35 @@ export const useResumeStore = defineStore('resume', () => {
     try {
       const data = JSON.parse(raw)
       if (data.modules) {
-        data.modules.forEach((m: ModuleConfig, i: number) => {
-          if (modules[i]) Object.assign(modules[i], m)
+        const byKey = new Map<string, ModuleConfig>()
+        ;(data.modules as ModuleConfig[]).forEach((m) => {
+          if (m?.key) byKey.set(m.key, m)
         })
+
+        const orderedKeys = [
+          'basicInfo',
+          ...(data.modules as ModuleConfig[]).map((m) => m.key).filter((key) => key && key !== 'basicInfo'),
+        ]
+
+        const seen = new Set<string>()
+        const nextModules: ModuleConfig[] = []
+
+        orderedKeys.forEach((key) => {
+          if (seen.has(key)) return
+          seen.add(key)
+          const fallback = modules.find((m) => m.key === key)
+          if (!fallback) return
+          nextModules.push({ ...fallback, ...(byKey.get(key) ?? {}) })
+        })
+
+        modules.forEach((m) => {
+          if (seen.has(m.key)) return
+          nextModules.push({ ...m, ...(byKey.get(m.key) ?? {}) })
+        })
+
+        modules.splice(0, modules.length, ...nextModules)
       }
+      selectedTemplateKey.value = normalizeResumeTemplateKey(data.selectedTemplateKey ?? data.selectedTemplateId)
       if (data.basicInfo) Object.assign(basicInfo, data.basicInfo)
       if (data.educationList) {
         educationList.splice(0, educationList.length, ...data.educationList)
@@ -293,6 +378,7 @@ export const useResumeStore = defineStore('resume', () => {
       () => JSON.stringify(projectList),
       () => JSON.stringify(awardList),
       selfIntro,
+      selectedTemplateKey,
       () => JSON.stringify(modules),
     ],
     () => {
@@ -304,6 +390,7 @@ export const useResumeStore = defineStore('resume', () => {
 
   return {
     modules,
+    selectedTemplateKey,
     basicInfo,
     educationList,
     skills,
@@ -312,6 +399,11 @@ export const useResumeStore = defineStore('resume', () => {
     awardList,
     selfIntro,
     toggleModule,
+    setTemplate,
+    canMoveModule,
+    moveModule,
+    isDefaultModuleOrder,
+    resetModuleOrder,
     isModuleVisible,
     addEducation,
     removeEducation,
