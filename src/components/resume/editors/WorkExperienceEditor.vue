@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { useResumeStore } from '@/stores/resume'
 import { ref } from 'vue'
-import RichEditor from '@/components/RichEditor.vue'
+import RichEditor from '@/components/common/RichEditor.vue'
 
 const store = useResumeStore()
 const collapsed = ref(false)
@@ -14,22 +14,22 @@ const collapsed = ref(false)
         <svg class="chevron" :class="{ rotated: !collapsed }" width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M6 4L10 8L6 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <h3>教育经历</h3>
+        <h3>工作经历</h3>
       </div>
     </div>
 
     <div v-show="!collapsed" class="section-body">
       <div
-        v-for="(edu, index) in store.educationList"
-        :key="edu.id"
+        v-for="(work, index) in store.workList"
+        :key="work.id"
         class="entry-card"
       >
         <div class="entry-header">
-          <span class="entry-index">教育经历 {{ index + 1 }}</span>
+          <span class="entry-index">工作经历 {{ index + 1 }}</span>
           <button
-            v-if="store.educationList.length > 1"
+            v-if="store.workList.length > 1"
             class="btn-remove"
-            @click="store.removeEducation(edu.id)"
+            @click="store.removeWork(work.id)"
           >
             ✕
           </button>
@@ -37,67 +37,44 @@ const collapsed = ref(false)
 
         <div class="form-grid">
           <div class="form-group">
-            <label class="form-label">学校</label>
-            <input v-model="edu.school" type="text" class="form-input" placeholder="请输入学校名称" />
+            <label class="form-label">公司名称</label>
+            <input v-model="work.company" type="text" class="form-input" placeholder="请输入公司名称" />
           </div>
           <div class="form-group">
-            <label class="form-label">学院</label>
-            <input v-model="edu.college" type="text" class="form-input" placeholder="请输入学院/院系" />
+            <label class="form-label">部门名称</label>
+            <input v-model="work.department" type="text" class="form-input" placeholder="请输入部门名称" />
           </div>
           <div class="form-group">
-            <label class="form-label">专业</label>
-            <input v-model="edu.major" type="text" class="form-input" placeholder="请输入专业" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">学历</label>
-            <select v-model="edu.degree" class="form-input">
-              <option value="">请选择</option>
-              <option value="大专">大专</option>
-              <option value="本科">本科</option>
-              <option value="硕士">硕士</option>
-              <option value="博士">博士</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">所在城市</label>
-            <input v-model="edu.location" type="text" class="form-input" placeholder="例如：广州" />
+            <label class="form-label">职位</label>
+            <input v-model="work.position" type="text" class="form-input" placeholder="请输入职位" />
           </div>
           <div class="form-group">
             <label class="form-label">开始时间</label>
-            <input v-model="edu.startDate" type="month" class="form-input" />
+            <input v-model="work.startDate" type="month" class="form-input" />
           </div>
           <div class="form-group">
             <label class="form-label">结束时间</label>
-            <input v-model="edu.endDate" type="month" class="form-input" />
+            <input v-model="work.endDate" type="month" class="form-input" />
           </div>
-          <div class="form-group">
-            <label class="form-label">学历类型</label>
-            <select v-model="edu.type" class="form-input">
-              <option value="">请选择</option>
-              <option value="全日制">全日制</option>
-              <option value="非全日制">非全日制</option>
-              <option value="自考">自考</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">GPA</label>
-            <input v-model="edu.gpa" type="text" class="form-input" placeholder="例如：3.8/4.0" />
+          <div class="form-group span-2">
+            <label class="form-label">工作地点</label>
+            <input v-model="work.location" type="text" class="form-input" placeholder="例如：深圳" />
           </div>
         </div>
 
         <div class="form-group form-group-full">
-          <label class="form-label">在校经历</label>
+          <label class="form-label">工作描述</label>
           <RichEditor
-            v-model="edu.description"
-            :rows="3"
-            placeholder="描述在校期间的重要经历、活动或成就..."
+            v-model="work.description"
+            :rows="4"
+            placeholder="描述工作职责、项目参与、技术贡献和成果..."
           />
         </div>
       </div>
 
-      <button class="btn-add" @click="store.addEducation()">
+      <button class="btn-add" @click="store.addWork()">
         <span class="btn-add-icon">+</span>
-        添加教育经历
+        添加工作经历
       </button>
     </div>
   </section>
@@ -212,6 +189,10 @@ const collapsed = ref(false)
 
 .form-group-full {
   margin-top: var(--spacing-md);
+}
+
+.span-2 {
+  grid-column: span 2;
 }
 
 .form-label {
