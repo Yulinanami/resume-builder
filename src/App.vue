@@ -1,22 +1,16 @@
 ﻿<script setup lang="ts">
 import { ref } from 'vue'
-import ModuleSidebar from '@/components/ModuleSidebar.vue'
-import EditorPanel from '@/components/EditorPanel.vue'
-import PreviewPanel from '@/components/PreviewPanel.vue'
+import ModuleSidebar from '@/components/common/ModuleSidebar.vue'
+import EditorPanel from '@/components/resume/EditorPanel.vue'
+import PreviewPanel from '@/components/resume/PreviewPanel.vue'
+import AiInterviewerPanel from '@/components/ai/AiInterviewerPanel.vue'
 
 const sidebarCollapsed = ref(false)
+type PrimaryMenuKey = 'resume-editor' | 'ai-interviewer'
+const activeMenu = ref<PrimaryMenuKey>('resume-editor')
 
-function handleContinueEditing() {
-  sidebarCollapsed.value = false
-  const editorPanel = document.querySelector('.editor-panel') as HTMLElement | null
-  if (!editorPanel) return
-  editorPanel.scrollTo({ top: 0, behavior: 'smooth' })
-  requestAnimationFrame(() => {
-    const firstField = editorPanel.querySelector('input, textarea, select, [contenteditable="true"]') as
-      | HTMLElement
-      | null
-    firstField?.focus()
-  })
+function handleSelectMenu(key: PrimaryMenuKey) {
+  activeMenu.value = key
 }
 </script>
 
@@ -24,12 +18,16 @@ function handleContinueEditing() {
   <div class="app-layout">
     <ModuleSidebar
       :collapsed="sidebarCollapsed"
+      :active-menu="activeMenu"
       @toggle-collapse="sidebarCollapsed = !sidebarCollapsed"
-      @continue-editing="handleContinueEditing"
+      @select-menu="handleSelectMenu"
     />
     <div class="main-content">
-      <EditorPanel />
-      <PreviewPanel />
+      <template v-if="activeMenu === 'resume-editor'">
+        <EditorPanel />
+        <PreviewPanel />
+      </template>
+      <AiInterviewerPanel v-else />
     </div>
   </div>
 </template>

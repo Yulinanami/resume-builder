@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { useResumeStore } from '@/stores/resume'
 import { ref } from 'vue'
-import RichEditor from '@/components/RichEditor.vue'
+import RichEditor from '@/components/common/RichEditor.vue'
 
 const store = useResumeStore()
 const collapsed = ref(false)

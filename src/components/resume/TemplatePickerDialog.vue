@@ -38,7 +38,7 @@ function markTemplateImageBroken(key: string) {
 function resolvePreviewImageSrc(value: string): string {
   const src = value.trim()
   if (!src) return ''
-  if (/^\/\//.test(src)) return `https:${src}`
+  if (src.startsWith('//')) return `https:${src}`
   if (/^(https?:|data:|blob:)/i.test(src)) return src
   return src
 }

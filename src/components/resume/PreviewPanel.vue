@@ -1,13 +1,14 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useResumeStore } from '@/stores/resume'
-import TemplatePickerDialog from '@/components/TemplatePickerDialog.vue'
+import TemplatePickerDialog from '@/components/resume/TemplatePickerDialog.vue'
 import {
   RESUME_TEMPLATES,
   getResumeTemplateByKey,
   type ResumeTemplateDefinition,
   type ResumeTemplateKey,
 } from '@/templates/resume'
+import { generateResumeMarkdown, downloadMarkdown } from '@/services/exportMarkdown'
 
 const store = useResumeStore()
 const resumeRef = ref<HTMLElement | null>(null)
@@ -142,6 +143,13 @@ function handleDocumentPointerDown(event: MouseEvent) {
   }
 }
 
+function handleExportMarkdown() {
+  exportMenuOpen.value = false
+  const md = generateResumeMarkdown(store)
+  const name = store.basicInfo.name?.trim() || '简历'
+  downloadMarkdown(`${name}_简历.md`, md)
+}
+
 async function exportPDF(mode: ExportQualityMode) {
   if (!resumeRef.value) return
   exporting.value = true
@@ -249,11 +257,12 @@ async function exportPDF(mode: ExportQualityMode) {
         @mouseenter="handleExportTriggerEnter"
       >
         <button class="btn-export" :disabled="exporting" @click="handleExportTriggerClick">
-          {{ exporting ? '导出中...' : '导出 PDF' }}
+          {{ exporting ? '导出中...' : '导出' }}
         </button>
         <div v-if="exportMenuOpen && !exporting" class="export-menu">
-          <button class="export-menu-item" @click="exportPDF('compressed')">压缩版导出</button>
-          <button class="export-menu-item" @click="exportPDF('hd')">高清版导出</button>
+          <button class="export-menu-item" @click="exportPDF('hd')">导出高清 PDF</button>
+          <button class="export-menu-item" @click="exportPDF('compressed')">导出压缩 PDF</button>
+          <button class="export-menu-item" @click="handleExportMarkdown">导出 Markdown</button>
         </div>
       </div>
     </div>

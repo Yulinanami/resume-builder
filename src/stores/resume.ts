@@ -335,12 +335,12 @@ export const useResumeStore = defineStore('resume', () => {
           seen.add(key)
           const fallback = modules.find((m) => m.key === key)
           if (!fallback) return
-          nextModules.push({ ...fallback, ...(byKey.get(key) ?? {}) })
+          nextModules.push({ ...fallback, ...byKey.get(key) })
         })
 
         modules.forEach((m) => {
           if (seen.has(m.key)) return
-          nextModules.push({ ...m, ...(byKey.get(m.key) ?? {}) })
+          nextModules.push({ ...m, ...byKey.get(m.key) })
         })
 
         modules.splice(0, modules.length, ...nextModules)
