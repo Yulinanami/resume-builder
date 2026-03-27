@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import ModuleSidebar from '@/components/common/ModuleSidebar.vue'
 import EditorPanel from '@/components/resume/EditorPanel.vue'
 import PreviewPanel from '@/components/resume/PreviewPanel.vue'
-import AiInterviewerPanel from '@/components/ai/AiInterviewerPanel.vue'
+import AiInterviewerPanel from '@/components/ai/interview/AiInterviewerPanel.vue'
 
 const sidebarCollapsed = ref(false)
 type PrimaryMenuKey = 'resume-editor' | 'ai-interviewer'

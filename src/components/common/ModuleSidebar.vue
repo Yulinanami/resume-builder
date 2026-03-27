@@ -24,7 +24,7 @@ const primaryMenus = [
   },
   {
     key: 'ai-interviewer' as const,
-    label: 'AI面试官',
+    label: 'AI面试',
     iconPath:
       'M9 3h6M12 3v3m-6 4h12a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-3l-3 2-3-2H6a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2Zm3 3h.01M15 15h.01',
   },
