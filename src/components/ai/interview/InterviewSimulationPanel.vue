@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it'
 import type { InterviewMode } from '@/services/interviewService'
 import type { ChatMessage } from '@/components/ai/interview/types'
 
+// author: jf
 const props = defineProps<{
   mode: InterviewMode
   messages: ChatMessage[]
@@ -20,7 +21,9 @@ const props = defineProps<{
   userTurns: number
   assistantTurns: number
   canStart: boolean
+  canTogglePause: boolean
   canFinish: boolean
+  sessionFinished: boolean
   timerRunning: boolean
 }>()
 
@@ -88,6 +91,10 @@ function handleInputKeydown(event: KeyboardEvent) {
   if (props.canSend) emit('send')
 }
 
+function handleComposerSubmit() {
+  if (props.canSend) emit('send')
+}
+
 function scrollToBottom() {
   if (!chatListRef.value) return
   chatListRef.value.scrollTop = chatListRef.value.scrollHeight
@@ -134,7 +141,7 @@ watch(
           v-else
           type="button"
           class="action-btn"
-          :disabled="isLoading"
+          :disabled="!canTogglePause"
           @click="emit('togglePause')"
         >
           {{ pauseButtonLabel }}
@@ -189,7 +196,7 @@ watch(
         </article>
       </div>
 
-      <form class="composer" @submit.prevent="emit('send')">
+      <form class="composer" @submit.prevent="handleComposerSubmit">
         <p class="composer-hint">输入你的回答（Enter 发送，Ctrl+Enter 换行，Ctrl+I 语音开关）</p>
         <div class="composer-main">
           <textarea
@@ -197,7 +204,7 @@ watch(
             class="answer-input"
             rows="5"
             placeholder=""
-            :disabled="isLoading"
+            :disabled="isLoading || sessionFinished"
             @input="emit('update:inputText', ($event.target as HTMLTextAreaElement).value)"
             @keydown="handleInputKeydown"
           />
@@ -206,7 +213,7 @@ watch(
               type="button"
               class="voice-btn"
               :class="{ active: isListening }"
-              :disabled="!sessionStarted || isLoading"
+              :disabled="!sessionStarted || sessionFinished || isLoading"
               @click="emit('toggleVoice')"
             >
               {{ isListening ? '停止语音' : '语音' }}

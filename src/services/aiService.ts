@@ -281,17 +281,55 @@ function normalizeSectionLabel(rawLabel: string): ParsedSectionKey | null {
   return null
 }
 
+function normalizeHeadingText(line: string): string {
+  return line
+    .replace(/\uFF03/g, '#')
+    .replace(/^\s*[-*+]\s*/, '')
+    .replace(/^[\s#*`]+/, '')
+    .replace(/[\s#*`：:]+$/, '')
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
 function parseSectionHeadingLine(line: string): { key: ParsedSectionKey; inlineContent: string } | null {
-  const match = line.match(
-    /^(?:#{1,6}\s*)?(?:\*\*)?\s*(优化建议|Suggestions?|优化后内容|优化后的内容|Optimized Content)\s*(?:\*\*)?\s*(?:[：:]\s*(.*))?$/i,
-  )
-  if (!match) return null
-  const key = normalizeSectionLabel(match[1] ?? '')
-  if (!key) return null
-  return {
-    key,
-    inlineContent: (match[2] ?? '').trim(),
+  const normalized = normalizeHeadingText(line)
+  const suggestionsKeywords = ['优化建议', '建议', 'suggestion', 'suggestions']
+  const optimizedKeywords = [
+    '优化后内容',
+    '优化后的内容',
+    '优化内容',
+    '优化结果',
+    'optimizedcontent',
+    'optimizedoutput',
+  ]
+
+  const hasSuggestionsKeyword = suggestionsKeywords.some((keyword) => normalized === keyword || normalized.startsWith(`${keyword}：`) || normalized.startsWith(`${keyword}:`))
+  if (hasSuggestionsKeyword) {
+    const inline = line
+      .replace(/^\s*[-*+]\s*/, '')
+      .replace(/^[#＃*\s`]+/, '')
+      .replace(/^(优化建议|建议|suggestions?)\s*[：:：-]?\s*/i, '')
+      .trim()
+    return { key: 'suggestions', inlineContent: inline }
   }
+
+  const hasOptimizedKeyword = optimizedKeywords.some((keyword) => normalized === keyword || normalized.startsWith(`${keyword}：`) || normalized.startsWith(`${keyword}:`))
+  if (hasOptimizedKeyword) {
+    const inline = line
+      .replace(/^\s*[-*+]\s*/, '')
+      .replace(/^[#＃*\s`]+/, '')
+      .replace(/^(优化后内容|优化后的内容|优化内容|优化结果|optimized\s*content|optimized\s*output)\s*[：:：-]?\s*/i, '')
+      .trim()
+    return { key: 'optimizedContent', inlineContent: inline }
+  }
+
+  const strictMatch = line.match(
+    /^(?:[-*+]\s*)?(?:[#＃]{1,6}\s*)?(?:\*\*)?\s*(优化建议|Suggestions?|优化后内容|优化后的内容|Optimized Content)\s*(?:\*\*)?\s*(?:[：:]\s*(.*))?$/i,
+  )
+  if (!strictMatch) return null
+  const key = normalizeSectionLabel(strictMatch[1] ?? '')
+  if (!key) return null
+  return { key, inlineContent: (strictMatch[2] ?? '').trim() }
 }
 
 export function parseAiResponse(text: string): ParsedAiResponse {
@@ -333,9 +371,15 @@ export function parseAiResponse(text: string): ParsedAiResponse {
     }
   }
 
+  if (!suggestions && optimizedContent) {
+    return {
+      suggestions: '本次模型未返回“优化建议”分段，仅返回了“优化后内容”。可点击“重新生成”重试。',
+      optimizedContent,
+    }
+  }
+
   return {
     suggestions,
     optimizedContent,
   }
 }
-

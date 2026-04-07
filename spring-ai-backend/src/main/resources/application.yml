@@ -1,0 +1,61 @@
+# author: jf
+server:
+  port: ${SERVER_PORT:8999}
+
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+  application:
+    name: spring-ai-backend
+  ai:
+    openai:
+      base-url: ${OPENAI_BASE_URL:${OPENAI_CHAT_BASE_URL:https://api.openai.com}}
+      api-key: ${OPENAI_API_KEY:${OPENAI_CHAT_API_KEY:}}
+      speech:
+        base-url: ${OPENAI_SPEECH_BASE_URL:${OPENAI_BASE_URL:${OPENAI_CHAT_BASE_URL:https://api.openai.com}}}
+        api-key: ${OPENAI_SPEECH_API_KEY:${OPENAI_API_KEY:${OPENAI_CHAT_API_KEY:}}}
+      chat:
+        base-url: ${OPENAI_CHAT_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com}}
+        api-key: ${OPENAI_CHAT_API_KEY:${OPENAI_API_KEY:}}
+        completions-path: ${OPENAI_CHAT_COMPLETIONS_PATH:/v1/chat/completions}
+        options:
+          model: ${OPENAI_CHAT_MODEL:gpt-5.4}
+      realtime:
+        base-url: ${OPENAI_REALTIME_BASE_URL:${OPENAI_SPEECH_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com}}}
+        api-key: ${OPENAI_REALTIME_API_KEY:${OPENAI_SPEECH_API_KEY:${OPENAI_API_KEY:}}}
+        client-secrets-path: ${OPENAI_REALTIME_CLIENT_SECRETS_PATH:/v1/realtime/client_secrets}
+        calls-path: ${OPENAI_REALTIME_CALLS_PATH:/v1/realtime/calls}
+        transcription-model: ${OPENAI_REALTIME_TRANSCRIPTION_MODEL:gpt-4o-transcribe}
+        language: ${OPENAI_REALTIME_LANGUAGE:zh}
+      embedding:
+        base-url: ${OPENAI_EMBEDDING_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com}}
+        api-key: ${OPENAI_EMBEDDING_API_KEY:${OPENAI_API_KEY:}}
+        embeddings-path: ${OPENAI_EMBEDDINGS_PATH:/v1/embeddings}
+        options:
+          model: ${OPENAI_EMBEDDING_MODEL:text-embedding-v4}
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/*.xml
+
+app:
+  cors-allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  rag-top-k: ${APP_RAG_TOP_K:5}
+  mysql:
+    url: ${MYSQL_DATASOURCE_URL:jdbc:mysql://localhost:3306/resume-builder?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_DATASOURCE_USERNAME:root}
+    password: ${MYSQL_DATASOURCE_PASSWORD:root}
+    driver-class-name: ${MYSQL_DATASOURCE_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+  pgvector:
+    url: ${PGVECTOR_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5433/vector_store}
+    username: ${PGVECTOR_DATASOURCE_USERNAME:pgvector}
+    password: ${PGVECTOR_DATASOURCE_PASSWORD:pgvector}
+    driver-class-name: ${PGVECTOR_DATASOURCE_DRIVER_CLASS_NAME:org.postgresql.Driver}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

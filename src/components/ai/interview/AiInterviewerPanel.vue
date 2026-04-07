@@ -1,36 +1,53 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AiConfigDialog from '@/components/ai/AiConfigDialog.vue'
 import InterviewSimulationPanel from '@/components/ai/interview/InterviewSimulationPanel.vue'
 import ResumePreviewOverlay from '@/components/ai/interview/ResumePreviewOverlay.vue'
+import { BrowserSpeechTranscriptionSession, type SpeechSession } from '@/services/browserSpeechService'
+import { RealtimeTranscriptionSession } from '@/services/realtimeSpeechService'
 import { useAiConfigStore } from '@/stores/aiConfig'
 import { useResumeStore } from '@/stores/resume'
 import {
+  getInterviewSessionDetail,
+  listInterviewSessions,
   requestInterviewTurn,
   type FinalEvaluation,
   type InterviewHistoryItem,
   type InterviewMode,
+  type InterviewSessionSummary,
   type InterviewTurnScore,
   type ResumeSnapshot,
 } from '@/services/interviewService'
 import type { ChatMessage } from '@/components/ai/interview/types'
 
-type SpeechRecognitionLike = {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  onstart: (() => void) | null
-  onresult: ((event: unknown) => void) | null
-  onerror: ((event: unknown) => void) | null
-  onend: (() => void) | null
-  start: () => void
-  stop: () => void
-}
-
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike
+// author: jf
+const TEXT = {
+  statusNotStarted: '\u672a\u5f00\u59cb',
+  statusFinished: '\u5df2\u7ed3\u675f',
+  statusRunning: '\u8fdb\u884c\u4e2d',
+  statusPaused: '\u5df2\u6682\u505c',
+  thinking: '\u6b63\u5728\u601d\u8003\u4e2d...',
+  unknownError: '\u672a\u77e5\u9519\u8bef',
+  modeCandidate: '\u5019\u9009\u4eba\u6a21\u5f0f\uff08AI \u9762\u8bd5\u5b98\uff09',
+  modeInterviewer: '\u9762\u8bd5\u5b98\u6a21\u5f0f\uff08AI \u5019\u9009\u4eba\uff09',
+  hideResume: '\u6536\u8d77\u7b80\u5386',
+  showResume: '\u67e5\u770b\u7b80\u5386',
+  totalScore: '\u603b\u5206',
+  pass: '\u901a\u8fc7',
+  fail: '\u672a\u901a\u8fc7',
+  projectInterview: '\u9879\u76ee\u9762\u8bd5',
+  switchedToBrowserSpeech: '\u5b9e\u65f6\u8bed\u97f3\u4e0d\u53ef\u7528\uff0c\u5df2\u5207\u6362\u4e3a\u6d4f\u89c8\u5668\u514d\u8d39\u8bed\u97f3\u8bc6\u522b',
+  speechUnavailable: '\u5b9e\u65f6\u8bed\u97f3\u4e0e\u6d4f\u89c8\u5668\u514d\u8d39\u8bed\u97f3\u5747\u4e0d\u53ef\u7528',
+  historyPlaceholder: '\u5386\u53f2\u4f1a\u8bdd',
+  historyRefresh: '\u5237\u65b0\u5386\u53f2',
+  historyLoading: '\u52a0\u8f7d\u4e2d...',
+  sessionAlreadyFinished: '\u5f53\u524d\u4f1a\u8bdd\u5df2\u7ed3\u675f\uff0c\u4e0d\u53ef\u7ee7\u7eed\u6216\u53d1\u9001\u6d88\u606f\u3002',
+} as const
 
 const resumeStore = useResumeStore()
-const aiConfig = useAiConfigStore()
+const aiConfigStore = useAiConfigStore()
+
+type SpeechEngine = 'realtime' | 'browser'
 
 const mode = ref<InterviewMode>('candidate')
 const durationMinutes = ref(60)
@@ -39,14 +56,19 @@ const sessionStarted = ref(false)
 const timerRunning = ref(false)
 const isLoading = ref(false)
 const isListening = ref(false)
-const showAiConfig = ref(false)
 const showResumePreview = ref(false)
+const showAiConfig = ref(false)
 const errorMsg = ref('')
 const inputText = ref('')
 const finalEvaluation = ref<FinalEvaluation | null>(null)
 const messages = ref<ChatMessage[]>([])
 const memorySummary = ref('')
 const streamingAssistantMessageId = ref<string | null>(null)
+const currentSessionId = ref('')
+const sessionHistory = ref<InterviewSessionSummary[]>([])
+const selectedSessionId = ref('')
+const loadingSessionHistory = ref(false)
+const sessionFinished = ref(false)
 
 const totalSeconds = computed(() => Math.max(durationMinutes.value, 1) * 60)
 const remainingSeconds = computed(() => Math.max(totalSeconds.value - elapsedSeconds.value, 0))
@@ -56,16 +78,21 @@ const timerText = computed(() => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 })
 const timerStatusText = computed(() => {
-  if (!sessionStarted.value) return '未开始'
-  if (remainingSeconds.value === 0) return '已结束'
-  return timerRunning.value ? '进行中' : '已暂停'
+  if (!sessionStarted.value) return TEXT.statusNotStarted
+  if (sessionFinished.value) return TEXT.statusFinished
+  if (remainingSeconds.value === 0) return TEXT.statusFinished
+  return timerRunning.value ? TEXT.statusRunning : TEXT.statusPaused
 })
 const assistantTurns = computed(() => messages.value.filter((item) => item.role === 'assistant').length)
 const userTurns = computed(() => messages.value.filter((item) => item.role === 'user').length)
 const currentRound = computed(() => Math.max(assistantTurns.value, userTurns.value))
-const canSend = computed(() => sessionStarted.value && inputText.value.trim() !== '' && !isLoading.value)
+const canSend = computed(() => sessionStarted.value && !sessionFinished.value && inputText.value.trim() !== '' && !isLoading.value)
 const canStart = computed(() => !sessionStarted.value && !isLoading.value)
-const canFinish = computed(() => sessionStarted.value && !isLoading.value && messages.value.length > 0)
+const canTogglePause = computed(() => sessionStarted.value && !sessionFinished.value && remainingSeconds.value > 0 && !isLoading.value)
+const canFinish = computed(() => sessionStarted.value && !isLoading.value && !sessionFinished.value && messages.value.length > 0)
+const configBadgeText = computed(() => '\u8bed\u97f3\u914d\u7f6e')
+const configTooltipText = computed(() => '\u8bed\u97f3\u914d\u7f6e')
+const historyRefreshText = computed(() => (loadingSessionHistory.value ? TEXT.historyLoading : TEXT.historyRefresh))
 
 const resumeSnapshot = computed<ResumeSnapshot>(() => ({
   basicInfo: resumeStore.basicInfo,
@@ -77,32 +104,11 @@ const resumeSnapshot = computed<ResumeSnapshot>(() => ({
 }))
 
 let ticker: ReturnType<typeof setInterval> | null = null
-let speechRecognition: SpeechRecognitionLike | null = null
-let speechSeed = ''
-let speechFinalBuffer = ''
-let speechLastResultIndex = 0
-let speechManuallyStopped = false
-let speechAutoRestart = false
-let speechRestartTimer: ReturnType<typeof setTimeout> | null = null
-let speechLastEventAt = 0
-const SPEECH_STALL_RESTART_MS = 12_000
-
-function clearSpeechRestartTimer() {
-  if (speechRestartTimer) {
-    clearTimeout(speechRestartTimer)
-    speechRestartTimer = null
-  }
-}
-
-function resetSpeechState() {
-  clearSpeechRestartTimer()
-  speechSeed = ''
-  speechFinalBuffer = ''
-  speechLastResultIndex = 0
-  speechManuallyStopped = false
-  speechAutoRestart = false
-  speechLastEventAt = 0
-}
+let speechSession: SpeechSession | null = null
+let speechEngine: SpeechEngine | null = null
+let switchingSpeechEngine = false
+let speechInputPrefix = ''
+let speechTranscript = ''
 
 function newMessageId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -122,7 +128,7 @@ function createAssistantDraftMessage(): string {
   messages.value.push({
     id,
     role: 'assistant',
-    content: '正在思考中...',
+    content: TEXT.thinking,
     score: null,
   })
   return id
@@ -140,11 +146,159 @@ function removeMessageById(id: string) {
   if (index >= 0) messages.value.splice(index, 1)
 }
 
-function resetSession() {
-  if (speechRecognition) {
-    speechManuallyStopped = true
-    speechRecognition.stop()
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error ?? TEXT.unknownError)
+}
+
+function mergeSpeechToInput() {
+  const transcript = speechTranscript.trim()
+  if (!transcript) {
+    inputText.value = speechInputPrefix
+    return
   }
+  inputText.value = speechInputPrefix ? `${speechInputPrefix}\n${transcript}` : transcript
+}
+
+function buildSpeechCallbacks(engine: SpeechEngine) {
+  return {
+    onPartialText(text: string) {
+      speechTranscript = text
+      mergeSpeechToInput()
+    },
+    onFinalText(_segment: string, mergedText: string) {
+      speechTranscript = mergedText
+      mergeSpeechToInput()
+    },
+    onError(message: string) {
+      if (engine === 'realtime') {
+        void handleRealtimeSpeechError(message)
+        return
+      }
+      errorMsg.value = message
+      stopSpeechSafely(false)
+    },
+    onStateChange(state: 'connecting' | 'connected' | 'closed') {
+      isListening.value = state === 'connected' || state === 'connecting'
+    },
+  }
+}
+
+async function createSpeechSession(engine: SpeechEngine): Promise<SpeechSession> {
+  if (engine === 'realtime') {
+    return new RealtimeTranscriptionSession({
+      language: 'zh',
+      callbacks: buildSpeechCallbacks('realtime'),
+    })
+  }
+
+  return new BrowserSpeechTranscriptionSession({
+    language: 'zh-CN',
+    callbacks: buildSpeechCallbacks('browser'),
+  })
+}
+
+async function activateSpeechEngine(engine: SpeechEngine) {
+  const session = await createSpeechSession(engine)
+  speechSession = session
+  speechEngine = engine
+  await session.start()
+}
+
+async function stopSpeech(clearSpeechText: boolean) {
+  const session = speechSession
+  speechSession = null
+  speechEngine = null
+
+  if (session) {
+    await session.stop({ silent: clearSpeechText })
+  }
+
+  isListening.value = false
+  if (clearSpeechText) {
+    speechTranscript = ''
+    inputText.value = speechInputPrefix
+  }
+  speechInputPrefix = ''
+}
+
+function stopSpeechSafely(clearSpeechText: boolean) {
+  void stopSpeech(clearSpeechText).catch(() => {
+    isListening.value = false
+  })
+}
+
+async function trySwitchToBrowserSpeech(reason: string): Promise<boolean> {
+  if (switchingSpeechEngine) {
+    return false
+  }
+
+  switchingSpeechEngine = true
+  try {
+    aiConfigStore.markBackendSpeechUnavailable()
+    await stopSpeech(false)
+    await activateSpeechEngine('browser')
+    errorMsg.value = `${TEXT.switchedToBrowserSpeech}\n${reason}`
+    return true
+  } catch (fallbackError) {
+    const fallbackMessage = formatErrorMessage(fallbackError)
+    errorMsg.value = `${TEXT.speechUnavailable}\n${reason}\n${fallbackMessage}`
+    return false
+  } finally {
+    switchingSpeechEngine = false
+  }
+}
+
+async function handleRealtimeSpeechError(message: string) {
+  if (speechEngine === 'realtime') {
+    const switched = await trySwitchToBrowserSpeech(message)
+    if (switched) {
+      return
+    }
+  }
+
+  errorMsg.value = message
+  stopSpeechSafely(false)
+}
+
+async function startSpeech() {
+  if (!sessionStarted.value || isLoading.value || speechSession) return
+
+  errorMsg.value = ''
+  speechInputPrefix = inputText.value.trim()
+  speechTranscript = ''
+  mergeSpeechToInput()
+
+  if (!aiConfigStore.shouldRequestBackendSpeech) {
+    try {
+      await activateSpeechEngine('browser')
+      return
+    } catch (error) {
+      const message = formatErrorMessage(error)
+      errorMsg.value = message
+      return
+    }
+  }
+
+  try {
+    await activateSpeechEngine('realtime')
+  } catch (error) {
+    const message = formatErrorMessage(error)
+    const switched = await trySwitchToBrowserSpeech(message)
+    if (switched) {
+      return
+    }
+
+    isListening.value = false
+    speechTranscript = ''
+    inputText.value = speechInputPrefix
+    speechInputPrefix = ''
+    errorMsg.value = message
+  }
+}
+
+function resetSession() {
+  stopSpeechSafely(true)
   messages.value = []
   finalEvaluation.value = null
   memorySummary.value = ''
@@ -154,8 +308,10 @@ function resetSession() {
   timerRunning.value = false
   streamingAssistantMessageId.value = null
   inputText.value = ''
+  currentSessionId.value = ''
+  selectedSessionId.value = ''
   isListening.value = false
-  resetSpeechState()
+  sessionFinished.value = false
 }
 
 function buildHistory(excludeLastUser = false): InterviewHistoryItem[] {
@@ -163,20 +319,109 @@ function buildHistory(excludeLastUser = false): InterviewHistoryItem[] {
   return source.map((item) => ({
     role: item.role,
     content: item.content,
+    score: item.score,
   }))
 }
 
-function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error ?? '未知错误')
+
+function buildSessionOptionLabel(item: InterviewSessionSummary): string {
+  const modeLabel = item.mode === 'candidate' ? '候选人模式' : '面试官模式'
+  const statusLabel = item.status === 'finished' ? '已结束' : '进行中'
+  const scoreLabel = item.totalScore == null ? '' : ` · ${item.totalScore}分`
+  const timeLabel = item.updatedAt.replace('T', ' ').slice(0, 16)
+  return `${timeLabel} · ${modeLabel} · ${statusLabel}${scoreLabel}`
 }
 
+function applySessionDetail(detail: Awaited<ReturnType<typeof getInterviewSessionDetail>>) {
+  mode.value = detail.mode
+  durationMinutes.value = Math.max(15, Math.min(120, detail.durationMinutes || 60))
+  elapsedSeconds.value = Math.max(0, Math.min(detail.elapsedSeconds || 0, durationMinutes.value * 60))
+  messages.value = detail.messages.map((item) => ({
+    id: newMessageId(),
+    role: item.role,
+    content: item.content,
+    score: item.score,
+  }))
+  memorySummary.value = detail.memorySummary || ''
+  finalEvaluation.value = detail.finalEvaluation
+  currentSessionId.value = detail.sessionId
+  selectedSessionId.value = detail.sessionId
+  sessionStarted.value = detail.messages.length > 0
+  timerRunning.value = false
+  streamingAssistantMessageId.value = null
+  inputText.value = ''
+  errorMsg.value = ''
+  sessionFinished.value = detail.status === 'finished' || Boolean(detail.finalEvaluation)
+}
+
+async function refreshSessionHistory(preferredSessionId?: string) {
+  loadingSessionHistory.value = true
+  try {
+    const sessions = await listInterviewSessions(30)
+    sessionHistory.value = sessions
+
+    const targetSessionId =
+      preferredSessionId ||
+      currentSessionId.value ||
+      selectedSessionId.value ||
+      sessions[0]?.sessionId ||
+      ''
+
+    selectedSessionId.value = sessions.some((item) => item.sessionId === targetSessionId) ? targetSessionId : sessions[0]?.sessionId || ''
+  } catch (error) {
+    errorMsg.value = formatErrorMessage(error)
+  } finally {
+    loadingSessionHistory.value = false
+  }
+}
+
+async function restoreSessionById(sessionId: string, refreshHistory = false) {
+  const targetSessionId = sessionId.trim()
+  if (!targetSessionId) return
+
+  if (isListening.value) {
+    await stopSpeech(false)
+  }
+
+  const detail = await getInterviewSessionDetail(targetSessionId)
+  applySessionDetail(detail)
+  if (refreshHistory) {
+    await refreshSessionHistory(targetSessionId)
+  }
+}
+
+async function initializeSessionHistory() {
+  await refreshSessionHistory()
+  const firstSessionId = selectedSessionId.value
+  if (!firstSessionId) return
+
+  try {
+    await restoreSessionById(firstSessionId)
+  } catch (error) {
+    errorMsg.value = formatErrorMessage(error)
+  }
+}
+
+async function handleSessionSelectionChange() {
+  const targetSessionId = selectedSessionId.value.trim()
+  if (!targetSessionId || targetSessionId === currentSessionId.value) return
+
+  try {
+    await restoreSessionById(targetSessionId)
+  } catch (error) {
+    errorMsg.value = formatErrorMessage(error)
+  }
+}
+
+function handleRefreshSessionHistory() {
+  void refreshSessionHistory(selectedSessionId.value || currentSessionId.value)
+}
 async function runInterview(command: 'start' | 'continue' | 'finish', userInput?: string) {
-  if (!aiConfig.isConfigured) {
-    showAiConfig.value = true
+  if (isLoading.value) return
+  if (command === 'continue' && sessionFinished.value) {
+    errorMsg.value = TEXT.sessionAlreadyFinished
     return
   }
-  if (isLoading.value) return
 
   isLoading.value = true
   errorMsg.value = ''
@@ -184,33 +429,41 @@ async function runInterview(command: 'start' | 'continue' | 'finish', userInput?
   streamingAssistantMessageId.value = draftMessageId
 
   try {
-    const response = await requestInterviewTurn({
-      config: {
-        apiUrl: aiConfig.apiUrl,
-        apiToken: aiConfig.apiToken,
-        modelName: aiConfig.modelName,
+    const response = await requestInterviewTurn(
+      {
+        mode: mode.value,
+        command,
+        sessionId: currentSessionId.value || undefined,
+        userInput,
+        history: buildHistory(command === 'continue'),
+        resumeSnapshot: resumeSnapshot.value,
+        durationMinutes: durationMinutes.value,
+        elapsedSeconds: elapsedSeconds.value,
+        memorySummary: memorySummary.value,
       },
-      mode: mode.value,
-      command,
-      userInput,
-      history: buildHistory(command === 'continue'),
-      resumeSnapshot: resumeSnapshot.value,
-      durationMinutes: durationMinutes.value,
-      elapsedSeconds: elapsedSeconds.value,
-      memorySummary: memorySummary.value,
-    }, undefined, {
-      onAssistantReplyChunk(text) {
-        updateAssistantMessageById(draftMessageId, text)
-      },
-    })
+      undefined,
+      {
+        onAssistantReplyChunk(text) {
+          updateAssistantMessageById(draftMessageId, text)
+        },
+      }
+    )
 
     updateAssistantMessageById(draftMessageId, response.assistantReply, response.turnScore)
+    if (response.sessionId) {
+      currentSessionId.value = response.sessionId
+      selectedSessionId.value = response.sessionId
+    }
     if (response.memorySummary) memorySummary.value = response.memorySummary
     if (response.finalEvaluation) finalEvaluation.value = response.finalEvaluation
-    if (response.nextAction === 'finish' || command === 'finish') timerRunning.value = false
+    if (response.nextAction === 'finish' || command === 'finish') {
+      timerRunning.value = false
+      sessionFinished.value = true
+    }
+    void refreshSessionHistory(currentSessionId.value)
   } catch (error: unknown) {
     const draft = messages.value.find((item) => item.id === draftMessageId)
-    if (draft && (!draft.content || draft.content.trim() === '' || draft.content === '正在思考中...')) {
+    if (draft && (!draft.content || draft.content.trim() === '' || draft.content === TEXT.thinking)) {
       removeMessageById(draftMessageId)
     }
     errorMsg.value = formatErrorMessage(error)
@@ -241,13 +494,16 @@ function adjustDuration(delta: number) {
 
 function handleStart() {
   if (!canStart.value) return
+  currentSessionId.value = ''
+  selectedSessionId.value = ''
   sessionStarted.value = true
   timerRunning.value = true
+  sessionFinished.value = false
   void runInterview('start')
 }
 
 function handleTogglePause() {
-  if (!sessionStarted.value || remainingSeconds.value === 0 || isLoading.value) return
+  if (!sessionStarted.value || sessionFinished.value || remainingSeconds.value === 0 || isLoading.value) return
   timerRunning.value = !timerRunning.value
 }
 
@@ -261,224 +517,66 @@ function handleReset() {
   resetSession()
 }
 
-function handleSend() {
+async function handleSend() {
   const text = inputText.value.trim()
-  if (!canSend.value || !text) return
-  if (isListening.value && speechRecognition) {
-    speechManuallyStopped = true
-    isListening.value = false
-    speechRecognition.stop()
-  }
-  appendMessage('user', text)
-  inputText.value = ''
-  resetSpeechState()
-  void runInterview('continue', text)
-}
-
-function getSpeechCtor(): SpeechRecognitionCtor | null {
-  const speechWindow = window as Window & {
-    webkitSpeechRecognition?: SpeechRecognitionCtor
-    SpeechRecognition?: SpeechRecognitionCtor
-  }
-  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null
-}
-
-function ensureSpeechRecognition(): SpeechRecognitionLike | null {
-  if (speechRecognition) return speechRecognition
-  const Ctor = getSpeechCtor()
-  if (!Ctor) return null
-
-  const instance = new Ctor()
-  instance.continuous = true
-  instance.interimResults = true
-  instance.lang = 'zh-CN'
-  instance.onstart = () => {
-    if (speechAutoRestart) {
-      isListening.value = true
-      speechLastEventAt = Date.now()
-    }
-  }
-
-  instance.onresult = (rawEvent: unknown) => {
-    if (!isListening.value) return
-
-    const event = rawEvent as {
-      resultIndex?: number
-      results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }>
-    }
-    if (!event?.results || typeof event.results.length !== 'number' || event.results.length === 0) return
-
-    speechLastEventAt = Date.now()
-    const maxIndex = Math.max(event.results.length - 1, 0)
-    const sourceIndex = typeof event.resultIndex === 'number' ? event.resultIndex : speechLastResultIndex
-    const startIndex =
-      event.results.length > 0 ? Math.max(0, Math.min(sourceIndex, maxIndex)) : 0
-
-    let finalText = ''
-    let interimText = ''
-    for (let i = startIndex; i < event.results.length; i++) {
-      const result = event.results[i]
-      if (!result) continue
-      const transcript = result[0]?.transcript?.trim() || ''
-      if (!transcript) continue
-      if (result.isFinal) {
-        finalText += `${finalText ? ' ' : ''}${transcript}`
-      } else {
-        interimText += `${interimText ? ' ' : ''}${transcript}`
-      }
-    }
-
-    if (finalText) {
-      speechFinalBuffer = [speechFinalBuffer, finalText].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
-    }
-    speechLastResultIndex = event.results.length
-    inputText.value = [speechSeed, speechFinalBuffer, interimText]
-      .filter(Boolean)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-  }
-
-  instance.onerror = (rawEvent: unknown) => {
-    speechLastEventAt = Date.now()
-    const event = rawEvent as { error?: string }
-    if (speechManuallyStopped || event.error === 'aborted') {
-      speechManuallyStopped = false
-      isListening.value = false
-      speechAutoRestart = false
-      return
-    }
-    if (event.error === 'no-speech') {
-      return
-    }
-    if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
-      isListening.value = false
-      speechAutoRestart = false
-      errorMsg.value = '无法访问麦克风，请检查浏览器权限后重试。'
-      return
-    }
-    if (event.error !== 'no-speech') {
-      errorMsg.value = '语音识别失败，请检查麦克风权限后重试。'
-    }
-  }
-  instance.onend = () => {
-    clearSpeechRestartTimer()
-    if (
-      !speechAutoRestart ||
-      speechManuallyStopped ||
-      !sessionStarted.value ||
-      isLoading.value
-    ) {
-      isListening.value = false
-      speechManuallyStopped = false
-      return
-    }
-
-    speechRestartTimer = setTimeout(() => {
-      if (
-        !speechRecognition ||
-        !speechAutoRestart ||
-        speechManuallyStopped ||
-        !sessionStarted.value ||
-        isLoading.value
-      ) {
-        return
-      }
-      try {
-        speechRecognition.start()
-        isListening.value = true
-        speechLastEventAt = Date.now()
-      } catch {
-        isListening.value = false
-        speechAutoRestart = false
-        errorMsg.value = '语音识别中断，请点击“语音”重新开始。'
-      }
-    }, 160)
-
-    speechManuallyStopped = false
-  }
-
-  speechRecognition = instance
-  return speechRecognition
-}
-
-function handleToggleVoice() {
-  const instance = ensureSpeechRecognition()
-  if (!instance) {
-    errorMsg.value = '当前浏览器不支持语音识别，请改用手动输入。'
+  if (sessionFinished.value) {
+    errorMsg.value = TEXT.sessionAlreadyFinished
     return
   }
-  if (!sessionStarted.value || isLoading.value) return
+  if (!canSend.value || !text) return
 
   if (isListening.value) {
-    speechManuallyStopped = true
-    speechAutoRestart = false
-    isListening.value = false
-    instance.stop()
+    await stopSpeech(false)
+  }
+
+  const finalText = inputText.value.trim()
+  if (!finalText) return
+
+  appendMessage('user', finalText)
+  inputText.value = ''
+  speechInputPrefix = ''
+  speechTranscript = ''
+  void runInterview('continue', finalText)
+}
+
+async function handleToggleVoice() {
+  if (!sessionStarted.value || sessionFinished.value || isLoading.value) return
+
+  if (isListening.value) {
+    await stopSpeech(false)
     return
   }
 
-  speechSeed = inputText.value.trim()
-  speechFinalBuffer = ''
-  speechLastResultIndex = 0
-  speechManuallyStopped = false
-  speechAutoRestart = true
-  speechLastEventAt = Date.now()
-  errorMsg.value = ''
-  isListening.value = true
-  try {
-    instance.start()
-  } catch {
-    isListening.value = false
-    speechAutoRestart = false
-    errorMsg.value = '语音识别启动失败，请稍后重试。'
-  }
+  await startSpeech()
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return
   if (event.key.toLowerCase() !== 'i') return
   event.preventDefault()
-  handleToggleVoice()
+  void handleToggleVoice()
+}
+
+function handleOpenAiConfig() {
+  showAiConfig.value = true
 }
 
 watch(remainingSeconds, (value) => {
   if (!sessionStarted.value) return
   if (value !== 0) return
   timerRunning.value = false
-  if (!finalEvaluation.value && !isLoading.value && aiConfig.isConfigured) {
+  if (!finalEvaluation.value && !isLoading.value) {
     void runInterview('finish')
   }
 })
 
 onMounted(() => {
+  void initializeSessionHistory()
   window.addEventListener('keydown', handleGlobalKeydown)
   ticker = setInterval(() => {
     if (!sessionStarted.value || !timerRunning.value) return
     if (remainingSeconds.value <= 0) return
     elapsedSeconds.value += 1
-
-    if (
-      isListening.value &&
-      speechAutoRestart &&
-      !isLoading.value &&
-      speechRecognition &&
-      speechLastEventAt > 0 &&
-      Date.now() - speechLastEventAt > SPEECH_STALL_RESTART_MS
-    ) {
-      speechLastEventAt = Date.now()
-      try {
-        speechRecognition.stop()
-      } catch {
-        try {
-          speechRecognition.start()
-        } catch {
-          isListening.value = false
-          speechAutoRestart = false
-          errorMsg.value = '语音识别卡住，请点击“语音”重新开始。'
-        }
-      }
-    }
   }, 1000)
 })
 
@@ -488,13 +586,7 @@ onUnmounted(() => {
     clearInterval(ticker)
     ticker = null
   }
-  clearSpeechRestartTimer()
-  if (speechRecognition) {
-    speechAutoRestart = false
-    speechManuallyStopped = true
-    speechRecognition.stop()
-    speechRecognition = null
-  }
+  stopSpeechSafely(true)
 })
 </script>
 
@@ -502,13 +594,8 @@ onUnmounted(() => {
   <section class="ai-interviewer-panel">
     <header class="topbar">
       <div class="role-switch">
-        <button
-          type="button"
-          class="mode-btn"
-          :class="{ active: mode === 'candidate' }"
-          @click="handleModeSwitch('candidate')"
-        >
-          你是面试者
+        <button type="button" class="mode-btn" :class="{ active: mode === 'candidate' }" @click="handleModeSwitch('candidate')">
+          {{ TEXT.modeCandidate }}
         </button>
         <button
           type="button"
@@ -516,35 +603,46 @@ onUnmounted(() => {
           :class="{ active: mode === 'interviewer' }"
           @click="handleModeSwitch('interviewer')"
         >
-          你是面试官
+          {{ TEXT.modeInterviewer }}
         </button>
       </div>
 
       <div class="top-actions">
         <button
-          class="interview-config-btn"
+          class="config-btn"
           type="button"
-          :data-model-tooltip="aiConfig.isConfigured ? aiConfig.modelName : '配置模型'"
-          @click="showAiConfig = true"
+          :title="configTooltipText"
+          :data-model-tooltip="configTooltipText"
+          @click="handleOpenAiConfig"
         >
-          <svg class="config-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="icon-xs" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="3" />
-            <path
-              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-            />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
-          <span class="interview-config-btn-text">{{ aiConfig.isConfigured ? aiConfig.modelName : '配置模型' }}</span>
+          <span class="config-btn-text">{{ configBadgeText }}</span>
+        </button>
+        <select
+          v-model="selectedSessionId"
+          class="history-select"
+          :disabled="loadingSessionHistory"
+          @change="handleSessionSelectionChange"
+        >
+          <option value="">{{ TEXT.historyPlaceholder }}</option>
+          <option v-for="item in sessionHistory" :key="item.sessionId" :value="item.sessionId">
+            {{ buildSessionOptionLabel(item) }}
+          </option>
+        </select>
+        <button class="top-btn" type="button" :disabled="loadingSessionHistory" @click="handleRefreshSessionHistory">
+          {{ historyRefreshText }}
         </button>
         <button class="top-btn" type="button" @click="showResumePreview = !showResumePreview">
-          {{ showResumePreview ? '收起简历' : '查看简历' }}
+          {{ showResumePreview ? TEXT.hideResume : TEXT.showResume }}
         </button>
       </div>
     </header>
 
     <div v-if="finalEvaluation" class="final-banner" :class="{ pass: finalEvaluation.passed, fail: !finalEvaluation.passed }">
-      综合评分 {{ finalEvaluation.totalScore }} · {{ finalEvaluation.passed ? '通过' : '未通过' }} · 项目
-      {{ finalEvaluation.projectScore }} / 技能 {{ finalEvaluation.skillScore }} / 工作
-      {{ finalEvaluation.workScore }} / 教育 {{ finalEvaluation.educationScore }}
+      {{ TEXT.totalScore }} {{ finalEvaluation.totalScore }}分｜{{ finalEvaluation.passed ? TEXT.pass : TEXT.fail }}｜{{ TEXT.projectInterview }}
     </div>
 
     <div class="workspace">
@@ -564,7 +662,9 @@ onUnmounted(() => {
         :user-turns="userTurns"
         :assistant-turns="assistantTurns"
         :can-start="canStart"
+        :can-toggle-pause="canTogglePause"
         :can-finish="canFinish"
+        :session-finished="sessionFinished"
         :timer-running="timerRunning"
         @update:input-text="inputText = $event"
         @start="handleStart"
@@ -637,7 +737,34 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.interview-config-btn {
+.top-btn {
+  border: 1px solid #dfd2c2;
+  border-radius: 8px;
+  background: #f7f3ee;
+  color: #5f5448;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.history-select {
+  min-width: 220px;
+  max-width: 360px;
+  height: 30px;
+  border: 1px solid #dfd2c2;
+  border-radius: 8px;
+  background: #fff;
+  color: #5f5448;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.history-select:disabled {
+  opacity: 0.65;
+}
+
+.config-btn {
   position: relative;
   height: 30px;
   padding: 0 10px;
@@ -652,11 +779,16 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   white-space: nowrap;
-  max-width: 260px;
+  max-width: 180px;
   overflow: visible;
 }
 
-.interview-config-btn-text {
+.config-btn:hover {
+  border-color: #d97745;
+  color: #d97745;
+}
+
+.config-btn-text {
   flex: 1;
   min-width: 0;
   display: inline-block;
@@ -665,59 +797,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.interview-config-btn::before,
-.interview-config-btn::after {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.interview-config-btn::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 3px);
-  transform: translate(-50%, -6px);
-  border: 5px solid transparent;
-  border-bottom-color: #2d2521;
-  z-index: 80;
-}
-
-.interview-config-btn::after {
-  content: attr(data-model-tooltip);
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 8px);
-  transform: translate(-50%, -6px);
-  width: max-content;
-  max-width: min(760px, 90vw);
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: #2d2521;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.35;
-  white-space: nowrap;
-  word-break: normal;
-  overflow-wrap: anywhere;
-  z-index: 81;
-}
-
-.interview-config-btn:hover::before,
-.interview-config-btn:hover::after,
-.interview-config-btn:focus-visible::before,
-.interview-config-btn:focus-visible::after {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
-.interview-config-btn:hover {
-  border-color: #d97745;
-  color: #d97745;
-}
-
-.config-icon {
+.icon-xs {
   width: 14px;
   height: 14px;
   fill: none;
@@ -726,17 +806,6 @@ onUnmounted(() => {
   stroke-linecap: round;
   stroke-linejoin: round;
   flex-shrink: 0;
-}
-
-.top-btn {
-  border: 1px solid #dfd2c2;
-  border-radius: 8px;
-  background: #f7f3ee;
-  color: #5f5448;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 7px 10px;
-  cursor: pointer;
 }
 
 .final-banner {
@@ -785,8 +854,9 @@ onUnmounted(() => {
   }
 
   .mode-btn,
-  .interview-config-btn,
-  .top-btn {
+  .top-btn,
+  .config-btn,
+  .history-select {
     flex: 1;
     text-align: center;
   }

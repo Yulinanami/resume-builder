@@ -1,7 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, type Component } from 'vue'
 import { useResumeStore } from '@/stores/resume'
-import { useAiConfigStore } from '@/stores/aiConfig'
 import BasicInfoEditor from './editors/BasicInfoEditor.vue'
 import EducationEditor from './editors/EducationEditor.vue'
 import SkillsEditor from './editors/SkillsEditor.vue'
@@ -9,16 +8,13 @@ import WorkExperienceEditor from './editors/WorkExperienceEditor.vue'
 import ProjectExperienceEditor from './editors/ProjectExperienceEditor.vue'
 import AwardsEditor from './editors/AwardsEditor.vue'
 import SelfIntroEditor from './editors/SelfIntroEditor.vue'
-import AiConfigDialog from '@/components/ai/AiConfigDialog.vue'
 import AiOptimizePanel from '@/components/ai/AiOptimizePanel.vue'
 import { getModuleIconPaths, MODULE_ICON_VIEWBOX } from '@/constants/moduleIcons'
 
 const store = useResumeStore()
-const aiConfig = useAiConfigStore()
 const showSaved = ref(false)
 const searchValue = ref('')
 const showAiPanel = ref(false)
-const showAiConfig = ref(false)
 const moduleMenuOpen = ref(false)
 const moduleMenuRef = ref<HTMLElement | null>(null)
 const draggingModuleKey = ref<string | null>(null)
@@ -26,15 +22,7 @@ const dragOverModuleKey = ref<string | null>(null)
 const nowTick = ref(Date.now())
 
 function handleAiClick() {
-  if (!aiConfig.isConfigured) {
-    showAiConfig.value = true
-  } else {
-    showAiPanel.value = true
-  }
-}
-
-function handleOpenConfigFromPanel() {
-  showAiConfig.value = true
+  showAiPanel.value = true
 }
 
 function toggleModuleMenu() {
@@ -429,12 +417,6 @@ onUnmounted(() => {
     <AiOptimizePanel
       v-if="showAiPanel"
       @close="showAiPanel = false"
-      @open-config="handleOpenConfigFromPanel"
-    />
-
-    <AiConfigDialog
-      v-if="showAiConfig"
-      @close="showAiConfig = false"
     />
   </main>
 </template>

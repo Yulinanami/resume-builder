@@ -3,22 +3,18 @@ import { ref, computed } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { AwardEntry, ProjectEntry, WorkEntry } from '@/stores/resume'
 import { useResumeStore } from '@/stores/resume'
-import { useAiConfigStore } from '@/stores/aiConfig'
 import {
-  optimizeModule,
   parseAiResponse,
   getModuleLabel,
   type ModuleData,
 } from '@/services/aiService'
+import { optimizeModule } from '@/services/aiOptimizeBackendService'
 
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'open-config'): void
 }>()
 
 const resumeStore = useResumeStore()
-const aiConfig = useAiConfigStore()
-
 const selectedModule = ref('')
 const isLoading = ref(false)
 const streamText = ref('')
@@ -52,7 +48,9 @@ const markdown = new MarkdownIt({
 })
 
 const parsed = computed(() => parseAiResponse(streamText.value))
-const renderedSuggestions = computed(() => markdown.render(parsed.value.suggestions || ''))
+const renderedSuggestions = computed(() =>
+  markdown.render(parsed.value.suggestions || '')
+)
 const resolvedOptimizedContent = computed(() => {
   const optimized = parsed.value.optimizedContent.trim()
   if (optimized) return optimized
@@ -61,7 +59,9 @@ const resolvedOptimizedContent = computed(() => {
   }
   return ''
 })
-const renderedOptimizedContent = computed(() => markdown.render(resolvedOptimizedContent.value || ''))
+const renderedOptimizedContent = computed(() =>
+  markdown.render(resolvedOptimizedContent.value || '')
+)
 const applySupportedModules = new Set(['skills', 'selfIntro', 'workExperience', 'projectExperience', 'awards'])
 const canApplySelectedModule = computed(() => applySupportedModules.has(selectedModule.value))
 const canUndoSelectedModule = computed(() => {
@@ -170,12 +170,34 @@ function removeLeadingModuleTitle(markdownText: string, moduleKey: string): stri
 
 function stripMarkdownDecorators(line: string): string {
   return line
-    .replace(/^#{1,6}\s+/, '')
-    .replace(/^\s*[-*+]\s+/, '')
-    .replace(/^\s*\d+\.\s+/, '')
     .replace(/\*\*/g, '')
+    .replace(/__/g, '')
     .replace(/`/g, '')
+    .replace(/^\s*[-*+]\s*/, '')
+    .replace(/^\s*[*_]+\s*/, '')
+    .replace(/^\s*\d+\.\s*/, '')
+    .replace(/^\\+#{1,6}(?:\s+|(?=\S))/, '')
+    .replace(/^#{1,6}(?:\s+|(?=\S))/, '')
+    .replace(/\s*#{1,6}\s*$/, '')
+    .replace(/^\s*[*_]+/, '')
+    .replace(/[*_]+\s*$/, '')
     .trim()
+}
+
+function normalizeListMarkerSpacing(line: string): string {
+  return line
+    .replace(/^(#{1,6})(?=\S)/, '$1 ')
+    .replace(/^([-*+])(?=\S)/, '$1 ')
+    .replace(/^(\d+)\.(?=\S)/, '$1. ')
+}
+
+function normalizeHeadingLineCandidate(line: string): string {
+  return normalizeListMarkerSpacing(line.trim())
+    .replace(/^\s*[-*+]\s*/, '')
+    .replace(/^\s*[*_]+\s*/, '')
+    .replace(/^\\+(#{1,6})(?=\S)/, '$1 ')
+    .replace(/^\\+(#{1,6})\s+/, '$1 ')
+    .replace(/^(#{1,6})(?=\S)/, '$1 ')
 }
 
 function normalizeMarkdownListContent(markdownText: string): string {
@@ -184,11 +206,12 @@ function normalizeMarkdownListContent(markdownText: string): string {
   let lastListIndex = -1
 
   for (const rawLine of lines) {
-    const trimmed = rawLine.trim()
+    const trimmed = normalizeListMarkerSpacing(rawLine.trim())
     if (!trimmed) continue
 
     const plain = stripMarkdownDecorators(trimmed).replace(/[：:]$/, '')
-    const isSectionHeading = /^#{1,6}\s+/.test(trimmed)
+    const headingCandidate = normalizeHeadingLineCandidate(trimmed)
+    const isSectionHeading = /^#{1,6}\s*/.test(headingCandidate)
       || /^\*\*[^*]+[:：]?\*\*$/.test(trimmed)
       || /^(项目介绍|项目简介|主要工作|核心职责|工作内容|职责|成果|技术栈)$/.test(plain)
     if (isSectionHeading) {
@@ -280,32 +303,6 @@ function mergeShortSkillsListItems(markdownText: string): string {
   }
 
   return renumberOrderedMarkdownList(out.join('\n').trim())
-}
-
-function sanitizeMarkdownForRender(markdownText: string): string {
-  let sanitized = markdownText
-    // Drop invalid bold markers like `** xxx` (space right after marker).
-    .replace(/(^|\n)(\s*)\*\*(?=\s+)/g, '$1$2')
-    // Drop boilerplate lead-ins that models occasionally prepend.
-    .replace(/^\s*(?:如下|优化后如下|优化如下|优化后内容如下)\s*[：:]?\s*/i, '')
-    // Drop boilerplate lines like `**优化后内容：**`.
-    .replace(/(^|\n)(\s*)(?:\*\*)?\s*(?:优化后内容|优化内容|优化建议|建议如下)\s*[：:]?\s*(?:\*\*)?\s*(?=\n|$)/gi, '$1$2')
-    .trim()
-
-  // Drop empty bold markers like `****` or `**   **` introduced by malformed outputs.
-  let previous = ''
-  while (previous !== sanitized) {
-    previous = sanitized
-    sanitized = sanitized.replace(/\*\*\s*\*\*/g, '')
-  }
-
-  const boldMarkerCount = (sanitized.match(/\*\*/g) ?? []).length
-  if (boldMarkerCount % 2 !== 0) {
-    // When markers are unbalanced, keep readability by removing marker chars.
-    sanitized = sanitized.replace(/\*\*/g, '')
-  }
-
-  return sanitized
 }
 
 function createBoldToken(raw: string, tokenMap: Record<string, string>): string {
@@ -448,7 +445,12 @@ function isProjectMetadataLine(line: string, projectList: ProjectEntry[]): boole
 }
 
 function parseProjectOptimizedSections(markdownText: string, projectList: ProjectEntry[]): Array<{ introduction: string; mainWork: string }> {
-  const lines = markdownText.replace(/\r\n/g, '\n').split('\n')
+  const lines = markdownText
+    .replace(/\r\n/g, '\n')
+    .replace(/(^|\n)\s*\\+(#{1,6})(?=\S)/g, '$1$2 ')
+    .replace(/(^|\n)\s*\\+(#{1,6})\s+/g, '$1$2 ')
+    .replace(/([^\n])\s+(#{1,6})\s*(?=\S)/g, '$1\n$2 ')
+    .split('\n')
   const projectNames = projectList.map((p) => p.name.trim()).filter(Boolean)
 
   const sectionStartIndexes: number[] = []
@@ -461,9 +463,10 @@ function parseProjectOptimizedSections(markdownText: string, projectList: Projec
     const isProjectNameOnly = projectNames.some((name) => plain === name)
     const hasDateRange = /(?:19|20)\d{2}[./-]\d{1,2}\s*(?:[~～\-—–至到]+\s*(?:(?:19|20)\d{2}[./-]\d{1,2}|至今|现在))/.test(plain)
     const hasMetaSeparator = /[|｜•·]/.test(plain)
-    const isSectionHeading = /^#{1,6}\s*项目经历\s*\d+/i.test(raw) || /^项目经历\s*\d+[：:]?$/i.test(plain)
+    const headingCandidate = normalizeHeadingLineCandidate(raw)
+    const isSectionHeading = /^#{1,6}\s*项目经历\s*\d+/i.test(headingCandidate) || /^项目经历\s*\d+[：:]?$/i.test(plain)
 
-    if (isSectionHeading || (hasProjectName && (isProjectNameOnly || hasDateRange || hasMetaSeparator || /^#{1,6}\s+/.test(raw)))) {
+    if (isSectionHeading || (hasProjectName && (isProjectNameOnly || hasDateRange || hasMetaSeparator || /^#{1,6}\s*/.test(headingCandidate)))) {
       sectionStartIndexes.push(i)
     }
   }
@@ -520,7 +523,12 @@ function isWorkMetadataLine(line: string, workList: WorkEntry[]): boolean {
 }
 
 function parseWorkOptimizedContent(markdownText: string, workList: WorkEntry[]): string[] {
-  const lines = markdownText.replace(/\r\n/g, '\n').split('\n')
+  const lines = markdownText
+    .replace(/\r\n/g, '\n')
+    .replace(/(^|\n)\s*\\+(#{1,6})(?=\S)/g, '$1$2 ')
+    .replace(/(^|\n)\s*\\+(#{1,6})\s+/g, '$1$2 ')
+    .replace(/([^\n])\s+(#{1,6})\s*(?=\S)/g, '$1\n$2 ')
+    .split('\n')
   const companyNames = workList.map((w) => w.company.trim()).filter(Boolean)
 
   const sectionStartIndexes: number[] = []
@@ -533,9 +541,10 @@ function parseWorkOptimizedContent(markdownText: string, workList: WorkEntry[]):
     const isCompanyOnly = companyNames.some((name) => plain === name)
     const hasDateRange = /(?:19|20)\d{2}[./-]\d{1,2}\s*(?:[~～\-—–至到]+\s*(?:(?:19|20)\d{2}[./-]\d{1,2}|至今|现在))/.test(plain)
     const hasMetaSeparator = /[|｜•·]/.test(plain)
-    const isSectionHeading = /^#{1,6}\s*工作经历\s*\d+/i.test(raw) || /^工作经历\s*\d+[：:]?$/i.test(plain)
+    const headingCandidate = normalizeHeadingLineCandidate(raw)
+    const isSectionHeading = /^#{1,6}\s*工作经历\s*\d+/i.test(headingCandidate) || /^工作经历\s*\d+[：:]?$/i.test(plain)
 
-    if (isSectionHeading || (hasCompany && (isCompanyOnly || hasDateRange || hasMetaSeparator || /^#{1,6}\s+/.test(raw)))) {
+    if (isSectionHeading || (hasCompany && (isCompanyOnly || hasDateRange || hasMetaSeparator || /^#{1,6}\s*/.test(headingCandidate)))) {
       sectionStartIndexes.push(i)
     }
   }
@@ -873,11 +882,6 @@ async function handleOptimize() {
   abortController = new AbortController()
 
   await optimizeModule(
-    {
-      apiUrl: aiConfig.apiUrl,
-      apiToken: aiConfig.apiToken,
-      modelName: aiConfig.modelName,
-    },
     selectedModule.value,
     getModuleData(),
     {
@@ -885,6 +889,12 @@ async function handleOptimize() {
         streamText.value = text
       },
       onDone(fullText) {
+        const parsedSections = parseAiResponse(fullText)
+        console.info('[ai-optimize][parsed-sections]', {
+          moduleKey: selectedModule.value,
+          suggestions: parsedSections.suggestions,
+          optimizedContent: parsedSections.optimizedContent,
+        })
         streamText.value = fullText
         isLoading.value = false
         isDone.value = true
@@ -910,10 +920,8 @@ function handleStop() {
 function handleApply() {
   if (!resolvedOptimizedContent.value || !selectedModule.value) return
 
-  const cleaned = removeLeadingModuleTitle(resolvedOptimizedContent.value, selectedModule.value)
-  const normalized = normalizeMarkdownListContent(cleaned)
-  const sanitized = sanitizeMarkdownForRender(normalized)
-  const content = markdown.render(sanitized)
+  const optimizedContent = removeLeadingModuleTitle(resolvedOptimizedContent.value, selectedModule.value).trim()
+  const content = markdown.render(optimizedContent)
   const key = selectedModule.value
   let applied = false
   let undoSnapshot: ApplyUndoSnapshot | null = null
@@ -921,7 +929,7 @@ function handleApply() {
   switch (key) {
     case 'skills':
       undoSnapshot = { previousContent: resumeStore.skills }
-      resumeStore.skills = markdown.render(mergeShortSkillsListItems(sanitized))
+      resumeStore.skills = markdown.render(mergeShortSkillsListItems(optimizedContent))
       applied = true
       break
     case 'selfIntro':
@@ -935,7 +943,7 @@ function handleApply() {
           previousContent: resumeStore.workList[0].description,
           previousWorkDescriptions: resumeStore.workList.map((w) => w.description),
         }
-        const workSections = parseWorkOptimizedContent(sanitized, resumeStore.workList)
+        const workSections = parseWorkOptimizedContent(optimizedContent, resumeStore.workList)
         const maxApplyCount = Math.min(workSections.length, resumeStore.workList.length)
 
         for (let i = 0; i < maxApplyCount; i++) {
@@ -950,7 +958,7 @@ function handleApply() {
         if (!applied && content.trim()) {
           const firstWork = resumeStore.workList[0]
           if (firstWork) {
-            firstWork.description = renderWorkSectionWithOriginalStyle(sanitized, firstWork.description)
+            firstWork.description = renderWorkSectionWithOriginalStyle(optimizedContent, firstWork.description)
             applied = true
           }
         }
@@ -966,7 +974,7 @@ function handleApply() {
           previousProjectMainWorks: resumeStore.projectList.map((p) => p.mainWork),
         }
 
-        const projectSections = parseProjectOptimizedSections(sanitized, resumeStore.projectList)
+        const projectSections = parseProjectOptimizedSections(optimizedContent, resumeStore.projectList)
         const maxApplyCount = Math.min(projectSections.length, resumeStore.projectList.length)
 
         for (let i = 0; i < maxApplyCount; i++) {
@@ -989,7 +997,7 @@ function handleApply() {
         }
 
         if (!applied && content.trim()) {
-          const enhancedMainWork = enhanceProjectMainWorkBold(sanitized)
+          const enhancedMainWork = enhanceProjectMainWorkBold(optimizedContent)
           target.mainWork = renderProjectMainWorkWithOriginalStyle(enhancedMainWork, target.mainWork)
           applied = true
         }
@@ -1000,7 +1008,7 @@ function handleApply() {
         previousContent: resumeStore.awardList[0]?.description ?? '',
         previousAwards: resumeStore.awardList.map((award) => ({ ...award })),
       }
-      const parsedAwards = parseAwardOptimizedSections(sanitized)
+      const parsedAwards = parseAwardOptimizedSections(optimizedContent)
       if (parsedAwards.length > 0) {
         const now = Date.now()
         const nextAwards = parsedAwards.map((award, index) => {
@@ -1008,7 +1016,7 @@ function handleApply() {
           const normalizedDescription = normalizeMarkdownListContent(award.description)
           const renderedDescription = normalizedDescription
             ? renderAwardDescriptionWithOriginalStyle(
-              sanitizeMarkdownForRender(normalizedDescription),
+              normalizedDescription,
               existing?.description ?? '',
             )
             : ''
@@ -1155,17 +1163,6 @@ function handleReset() {
             <h3 class="panel-title">AI 优化建议</h3>
           </div>
           <div class="panel-header-right">
-            <button
-              class="config-btn"
-              :data-model-tooltip="aiConfig.modelName || '配置模型'"
-              @click="emit('open-config')"
-            >
-              <svg class="icon-xs" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span class="config-btn-text">{{ aiConfig.modelName || '配置' }}</span>
-            </button>
             <button class="close-btn" @click="handleClose" aria-label="关闭">
               <svg class="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M18 6L6 18" />
@@ -1189,7 +1186,7 @@ function handleReset() {
             <button
               v-if="!isLoading"
               class="btn-optimize"
-              :disabled="!selectedModule || !aiConfig.isConfigured"
+              :disabled="!selectedModule"
               @click="handleOptimize"
             >
               <svg class="icon-xs" viewBox="0 0 24 24" aria-hidden="true">
@@ -1218,15 +1215,6 @@ function handleReset() {
             </button>
           </div>
 
-          <p v-if="!aiConfig.isConfigured" class="config-tip">
-            <svg class="icon-xs config-tip-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3l10 18H2L12 3z" />
-              <path d="M12 9v5" />
-              <path d="M12 18h.01" />
-            </svg>
-            <span>请先点击右上角</span>
-            <button class="inline-link" @click="emit('open-config')">配置 AI 服务</button>
-          </p>
         </div>
 
         <!-- Results area -->
@@ -1434,86 +1422,6 @@ function handleReset() {
   gap: 6px;
 }
 
-.config-btn {
-  position: relative;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 7px;
-  border: 1px solid #ddd2c6;
-  background: #fff;
-  color: #5c4f44;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  max-width: 160px;
-  overflow: visible;
-}
-
-.config-btn-text {
-  flex: 1;
-  min-width: 0;
-  display: inline-block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.config-btn::before,
-.config-btn::after {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.config-btn::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 3px);
-  transform: translate(-50%, -6px);
-  border: 5px solid transparent;
-  border-bottom-color: #2d2521;
-  z-index: 60;
-}
-
-.config-btn::after {
-  content: attr(data-model-tooltip);
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 8px);
-  transform: translate(-50%, -6px);
-  width: max-content;
-  max-width: min(680px, 88vw);
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: #2d2521;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.35;
-  white-space: nowrap;
-  word-break: normal;
-  overflow-wrap: anywhere;
-  z-index: 61;
-}
-
-.config-btn:hover::before,
-.config-btn:hover::after,
-.config-btn:focus-visible::before,
-.config-btn:focus-visible::after {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
-.config-btn:hover {
-  border-color: #d97745;
-  color: #d97745;
-}
-
 .close-btn {
   width: 30px;
   height: 30px;
@@ -1636,31 +1544,6 @@ function handleReset() {
 .btn-reset:hover {
   border-color: #d97745;
   color: #d97745;
-}
-
-.config-tip {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #c96a3b;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.config-tip-icon {
-  color: #c96a3b;
-}
-
-.inline-link {
-  border: none;
-  background: none;
-  color: #d97745;
-  font-weight: 600;
-  font-size: 12px;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
 }
 
 /* ---- Results ---- */
