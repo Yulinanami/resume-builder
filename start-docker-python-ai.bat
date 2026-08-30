@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM author: jf
 setlocal EnableExtensions
 
@@ -91,9 +92,9 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo.
 echo [INFO] Python AI 后端 Docker 服务已启动。
-echo [INFO] 本地前端：http://localhost:%FRONTEND_PORT%
+echo [INFO] 本地前端:http://localhost:%FRONTEND_PORT%
 echo [INFO] Health: http://localhost:%BACKEND_PORT%/health
-echo [INFO] 数据库迁移目录：sql/migrations/mysql 与 sql/migrations/postgresql。
+echo [INFO] 数据库迁移目录:sql/migrations/mysql 与 sql/migrations/postgresql。
 echo.
 docker compose %COMPOSE_ENV% ps
 echo.
@@ -101,7 +102,7 @@ docker compose %COMPOSE_ENV% logs --tail=80 python-ai-backend
 if errorlevel 1 exit /b %errorlevel%
 
 echo.
-echo [INFO] 前端未自动启动，请在新终端手动执行：
+echo [INFO] 前端未自动启动，请在新终端手动执行:
 echo [INFO] npm run dev -- --host 127.0.0.1 --port %FRONTEND_PORT% --strictPort
 exit /b 0
 

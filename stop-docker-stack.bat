@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM author: jf
 setlocal
 
