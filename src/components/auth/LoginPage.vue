@@ -17,6 +17,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const emit = defineEmits<{
   (e: 'login-success'): void
+  (e: 'guest-access'): void
   (e: 'show-register'): void
 }>()
 
@@ -154,6 +155,9 @@ async function handleSubmit() {
 
             <button class="login-submit" type="submit" :disabled="isSubmitting">
               <span>{{ isSubmitting ? '登录中...' : '登录' }}</span>
+            </button>
+            <button class="login-guest" type="button" :disabled="isSubmitting" @click="emit('guest-access')">
+              <span>免登录使用</span>
             </button>
           </form>
 
@@ -616,6 +620,36 @@ async function handleSubmit() {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.login-guest {
+  height: 56px;
+  width: 100%;
+  justify-content: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.login-guest:hover,
+.login-guest:focus-visible {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  transform: translateY(-1px);
+}
+
+.login-guest:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .login-footer {

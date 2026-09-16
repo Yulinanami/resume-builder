@@ -1,17 +1,65 @@
 <!-- author: jf -->
 # AI 执行入口
 
-本文件只保留仓库协作入口和必要限制；完整规范统一存放在 `.workflow/specs/`。
+本文件只保留后续会话容易猜错的仓库事实；完整规范在 `.workflow/specs/`。
 
 ## 必须遵守
 
 1. 对话必须使用中文。
-2. 处理本仓库任务前，必须先读取 `.workflow/specs/index.md`、`.workflow/specs/global.md` 和 `.workflow/specs/conventions.md`，再按索引读取与任务相关的 Spec。
-3. `.workflow/specs/` 下新增规范默认同样属于仓库级强制规范；如索引未及时更新，也不得绕过。
+2. 处理本仓库任务前，必须先读取 `.workflow/specs/index.md`、`.workflow/specs/global.md` 和 `.workflow/specs/conventions.md`，再按索引读取与任务相关的 Spec。不要默认把全部 Spec 塞进上下文。
+3. `.workflow/specs/` 下新增规范默认同样属于仓库级强制规范；如索引未及时更新，也不得绕过。`.rules/` 已废弃，禁止重建为平行规范入口。
 4. 新增或修改文件时，除 `mapper.xml` 外必须标记作者为 `jf`，且禁止出现作者为 `ai` 的标识。
-5. 新增或修改代码中的注释必须使用中文。
-6. 禁止新增或修改测试代码、测试脚本、fixture 或 mock 文件，详见 `.workflow/specs/testing.md`。
+5. 新增或修改代码中的注释和日志必须使用中文；标识符用英文。
+6. 禁止新增或修改测试代码、测试脚本、fixture 或 mock 文件，详见 `.workflow/specs/testing.md`。仓库当前没有测试套件，也不要去补。
 7. 修改或设计 UI 界面时，先遵守现有设计系统和 `.workflow/specs/frontend.md`；设计类 Skill、MCP 或其他工具仅按需选用，不得作为强制前置门禁。
+8. 除非用户要求、入口规则或完整 Harness 需要，不要创建与当前任务无关的文档、脚本或 README。
+9. 前端单文件不超过 1000 行，后端单文件不超过 800 行；超限按职责拆分。
+10. 内置发给模型的 prompt 必须使用中文。
+
+## 仓库事实
+
+- 三件套：根目录 Vue 3 前端、`spring-ai-backend/`、`python-ai-backend/`。两套后端共享 `/api/auth` 与 `/api/ai` 契约，都监听 `8999`，禁止同时启动。
+- 前端 `vite.config.ts` 把 `/api` 和 `/ws` 代理到 `http://localhost:8999`。`start-docker-*.bat` 不启动开发前端；本地联调前端仍用 `npm run dev`（`http://localhost:5173`）。
+- Compose profile `spring-ai` 与 `python-ai` 互斥。Realtime 也不对称：Spring 默认 DashScope，前端连 `/ws/ai/realtime-asr`；Python 只发 `/api/ai/realtime/client-secret`，没有该 WebSocket。
+- 应用启动不执行项目 SQL。先起库，再由独立 Flyway 容器跑 `sql/migrations/`。pgvector 宿主机端口默认 `5433`，不是 `5432`。
+- 无 `.github/workflows`，不要假设 CI 会跑测试或构建。
+- `docs/requirements/` 被 gitignore；准备提交说明时必须直接读文件，不能只看 `git status`。
+
+## 命令
+
+前端（仓库根目录，npm / `package-lock.json`）：
+
+```powershell
+npm install
+npm run dev
+npm run lint
+npm run type-check
+npm run build
+```
+
+脚本名是 `type-check`，不是 `typecheck`。前端可见改动必须跑 `npm run lint`；涉及交互时再做浏览器级或等价手工验证。
+
+后端：先复制对应 `.env.example` 为 `.env`。Spring 用 JDK 21，根目录 `.\start-spring-backend.bat`，或在 `spring-ai-backend/` 执行 `mvn spring-boot:run`。Python 用 `uv`，根目录 `.\start-python-backend.bat`。健康检查：`GET http://localhost:8999/health`；Python 另有 `/health/runtime`。
+
+数据库（仓库根目录；按实际后端改 profile）：
+
+```powershell
+docker compose --profile spring-ai up -d mysql pgvector
+docker compose --profile migration build flyway-mysql
+docker compose --profile migration run --rm --no-deps flyway-mysql
+docker compose --profile migration run --rm --no-deps flyway-pgvector
+```
+
+已应用迁移禁止改，只能新增更高版本。手工建库在 `sql/bootstrap/`，本地种子在 `sql/seeds/`（生产禁跑）。运行时代码禁止硬编码 SQL；MySQL 自定义 SQL 只写 `mapper.xml`。Spring `PgVectorStore` 必须保持 `initializeSchema(false)`。直连数据库用 `usql`，连接信息从配置读取。
+
+验证只允许现有命令、一次性不落盘检查、日志/健康检查和手工操作；不要为验证创建临时项目文件。
+
+## Git
+
+- 禁止在 `main` 或 `dev` 上直接开发和提交。
+- 分支英文 kebab-case，前缀 `feat/`、`fix/`、`hotfix/`、`docs/`、`chore/`、`refactor/`、`style/`、`perf/`、`build/`、`ci/`。
+- 提交信息中文 + Conventional Commits；Git 与 PR 禁止 AI 生成标识。
+- 未获用户明确要求不要提交。
 
 ## Harness 路由门禁
 
