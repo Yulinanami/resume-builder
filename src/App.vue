@@ -37,7 +37,9 @@ const LOGIN_ROUTE_PATH = '/login'
 const REGISTER_ROUTE_PATH = '/register'
 const authView = ref<AuthView>(resolveInitialAuthView())
 const themeMode = ref<ThemeMode>(resolveInitialThemeMode())
+const guestAccess = ref(false)
 const isAuthenticated = computed(() => authStore.isAuthenticated)
+const canEnterApp = computed(() => isAuthenticated.value || guestAccess.value)
 const canManageKnowledgeBase = computed(() => authStore.canManageKnowledgeBase)
 
 function resolveInitialAuthView(): AuthView {
@@ -130,7 +132,7 @@ function syncLoginRoute() {
 
 function syncMenuFromLocation() {
   if (typeof window === 'undefined') return
-  if (!isAuthenticated.value) {
+  if (!canEnterApp.value) {
     syncAuthRoute(resolveInitialAuthView())
     return
   }
@@ -147,7 +149,7 @@ function syncMenuFromLocation() {
 }
 
 function handleSelectMenu(key: PrimaryMenuKey) {
-  if (!isAuthenticated.value) {
+  if (!canEnterApp.value) {
     syncLoginRoute()
     return
   }
@@ -162,12 +164,22 @@ function handleSelectMenu(key: PrimaryMenuKey) {
   }
 }
 
-function handleLoginSuccess() {
+function enterApp() {
   authView.value = 'login'
   setActiveMenu(DEFAULT_PRIMARY_MENU_KEY)
   if (typeof window !== 'undefined') {
     window.history.replaceState({ primaryMenu: DEFAULT_PRIMARY_MENU_KEY }, '', resolvePrimaryMenuPath(DEFAULT_PRIMARY_MENU_KEY))
   }
+}
+
+function handleLoginSuccess() {
+  guestAccess.value = false
+  enterApp()
+}
+
+function handleGuestAccess() {
+  guestAccess.value = true
+  enterApp()
 }
 
 function handleShowRegister() {
@@ -179,10 +191,16 @@ function handleShowLogin() {
 }
 
 function handleLogout() {
+  guestAccess.value = false
   resumeStore.resetForLogout()
   authStore.logout()
   setActiveMenu(DEFAULT_PRIMARY_MENU_KEY)
   syncLoginRoute()
+}
+
+function handleSessionExpired() {
+  if (!isAuthenticated.value) return
+  handleLogout()
 }
 
 onMounted(() => {
@@ -191,24 +209,25 @@ onMounted(() => {
     void resumeStore.initializeResumes().catch(() => undefined)
   }
   window.addEventListener('popstate', syncMenuFromLocation)
-  window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleLogout)
+  window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired)
 })
 
 onUnmounted(() => {
   window.removeEventListener('popstate', syncMenuFromLocation)
-  window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleLogout)
+  window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired)
 })
 
 watch(
   () => authStore.isAuthenticated,
   (authenticated) => {
     if (authenticated) {
+      guestAccess.value = false
       syncMenuFromLocation()
       void resumeStore.initializeResumes().catch(() => undefined)
       return
     }
     resumeStore.resetForLogout()
-    syncAuthRoute(resolveInitialAuthView())
+    if (!guestAccess.value) syncAuthRoute(resolveInitialAuthView())
   }
 )
 
@@ -224,11 +243,12 @@ watch(
 
 <template>
   <LoginPage
-    v-if="!isAuthenticated && authView === 'login'"
+    v-if="!canEnterApp && authView === 'login'"
     @login-success="handleLoginSuccess"
+    @guest-access="handleGuestAccess"
     @show-register="handleShowRegister"
   />
-  <RegisterPage v-else-if="!isAuthenticated" @show-login="handleShowLogin" @register-success="handleLoginSuccess" />
+  <RegisterPage v-else-if="!canEnterApp" @show-login="handleShowLogin" @register-success="handleLoginSuccess" />
   <div v-else class="app-layout">
     <ModuleSidebar
       :collapsed="sidebarCollapsed"
